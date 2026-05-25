@@ -5,7 +5,7 @@ UV         ?= uv
 COMPOSE    ?= docker compose -f docker/compose.yml
 SRC        := src/aidevswarm
 TESTS      := tests
-COV_FAIL   ?= 80
+COV_FAIL   ?= 85
 
 .PHONY: help install lint format typecheck test smoke up down logs ps clean \
         migrate migration \
