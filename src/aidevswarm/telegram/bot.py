@@ -69,7 +69,7 @@ class TelegramBot:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def build_application(self) -> Application:  # type: ignore[type-arg]
+    def build_application(self) -> Application:  # type: ignore[type-arg]  # pragma: no cover — live PTB only
         """Wire the Application + handlers. Tests can call this directly."""
         token = self.settings.telegram_bot_token.get_secret_value()
         if not token:
@@ -84,7 +84,7 @@ class TelegramBot:
         self._app = app
         return app
 
-    async def run_polling(self) -> None:
+    async def run_polling(self) -> None:  # pragma: no cover — live PTB only
         """Run the bot's polling loop inside the orchestrator's gather.
 
         ``Application.run_polling`` in python-telegram-bot 21 is a
@@ -176,37 +176,48 @@ class TelegramBot:
         if query is None or not query.data:
             return
         await query.answer()
-        # Callback data carries either "approve:<project_id>" /
-        # "drop:<project_id>" / "yes:<json>" / "no".
+        # Callback data: "approve:<id>" / "drop:<id>" / "yes:<json>" / "no".
         prefix, _sep, payload = query.data.partition(":")
-        if prefix == "no":
-            await self._reply_via_query(query, "cancelled.")
+        handler = self._callback_handlers().get(prefix)
+        if handler is not None:
+            await handler(query, payload)
+
+    def _callback_handlers(self) -> dict[str, Any]:
+        return {
+            "no": self._cb_no,
+            "yes": self._cb_yes,
+            "approve": self._cb_approve,
+            "drop": self._cb_drop,
+        }
+
+    async def _cb_no(self, query: Any, _payload: str) -> None:
+        await self._reply_via_query(query, "cancelled.")
+
+    async def _cb_yes(self, query: Any, payload: str) -> None:
+        try:
+            raw = json.loads(payload)
+        except json.JSONDecodeError:
+            await self._reply_via_query(query, "invalid confirm payload")
             return
-        if prefix == "yes":
-            try:
-                raw = json.loads(payload)
-            except json.JSONDecodeError:
-                await self._reply_via_query(query, "invalid confirm payload")
-                return
-            raw["confirmed"] = True
-            try:
-                command = _COMMAND_ADAPTER.validate_python(raw)
-            except ValidationError:
-                await self._reply_via_query(query, "invalid confirm payload schema")
-                return
-            result = self.router.dispatch(command)
-            await self._reply_via_query(query, self.redactor(f"{command.intent}: {result.detail}"))
+        raw["confirmed"] = True
+        try:
+            command = _COMMAND_ADAPTER.validate_python(raw)
+        except ValidationError:
+            await self._reply_via_query(query, "invalid confirm payload schema")
             return
-        if prefix == "approve":
-            try:
-                pid = UUID(payload)
-            except ValueError:
-                return
-            result = self.router.dispatch(Approve(project_id=pid))
-            await self._reply_via_query(query, f"approve: {result.detail}")
+        result = self.router.dispatch(command)
+        await self._reply_via_query(query, self.redactor(f"{command.intent}: {result.detail}"))
+
+    async def _cb_approve(self, query: Any, payload: str) -> None:
+        try:
+            pid = UUID(payload)
+        except ValueError:
             return
-        if prefix == "drop":
-            await self._reply_via_query(query, "drop button is a UI hint only; type 'drop project'")
+        result = self.router.dispatch(Approve(project_id=pid))
+        await self._reply_via_query(query, f"approve: {result.detail}")
+
+    async def _cb_drop(self, query: Any, _payload: str) -> None:
+        await self._reply_via_query(query, "drop button is a UI hint only; type 'drop project'")
 
     # ------------------------------------------------------------------
     # Dispatch helpers

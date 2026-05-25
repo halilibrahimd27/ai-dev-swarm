@@ -20,6 +20,7 @@ confirmation step.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from aidevswarm.db.protocols import ProjectRepo
 from aidevswarm.logging_config import get_logger
@@ -76,44 +77,35 @@ class CommandRouter:
 
     def dispatch(self, command: Command) -> CommandResult:
         """Translate one typed Command into orchestrator state."""
-        intent = command.intent
-
-        # Guard: destructive intents must arrive confirmed.
         if requires_confirmation(command):
             return CommandResult(
                 ok=False,
-                intent=intent,
-                detail=f"{intent} is destructive — confirm via [Yes][No] first.",
+                intent=command.intent,
+                detail=f"{command.intent} is destructive — confirm via [Yes][No] first.",
                 requires_confirmation=True,
             )
+        handler = self._handlers().get(type(command))
+        # The schema guarantees `command` is one of the variants — the
+        # registry lookup is exhaustive by construction.
+        result: CommandResult = handler(command)  # type: ignore[misc]
+        return result
 
-        match command:
-            case Approve():
-                return self._approve(command)
-            case InjectNote():
-                return self._inject_note(command)
-            case PauseProject():
-                return self._pause(command)
-            case ResumeProject():
-                return self._resume(command)
-            case AbortProject():
-                return self._abort(command)
-            case Rescope():
-                return self._rescope(command)
-            case TransformProject():
-                return self._transform(command)
-            case DropAndStartNew():
-                return self._drop_and_start_new(command)
-            case SwitchToIdea():
-                return self._switch_to_idea(command)
-            case RejectIdea():
-                return self._reject_idea(command)
-            case KillSwitch():
-                return self._kill_switch(command)
-            case ListState():
-                return self._list_state(command)
-            case ShowTranscript():
-                return self._show_transcript(command)
+    def _handlers(self) -> dict[type, Any]:
+        return {
+            Approve: self._approve,
+            InjectNote: self._inject_note,
+            PauseProject: self._pause,
+            ResumeProject: self._resume,
+            AbortProject: self._abort,
+            Rescope: self._rescope,
+            TransformProject: self._transform,
+            DropAndStartNew: self._drop_and_start_new,
+            SwitchToIdea: self._switch_to_idea,
+            RejectIdea: self._reject_idea,
+            KillSwitch: self._kill_switch,
+            ListState: self._list_state,
+            ShowTranscript: self._show_transcript,
+        }
 
     # ------------------------------------------------------------------
     # Non-destructive handlers

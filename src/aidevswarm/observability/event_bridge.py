@@ -155,7 +155,7 @@ class EventBridge:
     # CrewAI wiring
     # ------------------------------------------------------------------
 
-    def install_crewai_handlers(self) -> None:
+    def install_crewai_handlers(self) -> None:  # pragma: no cover — live CrewAI only
         """Register handlers on the global CrewAI EventBus.
 
         Lazy import so test stacks that don't touch CrewAI don't pay
