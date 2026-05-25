@@ -7,10 +7,10 @@ object is constructed once at startup and passed by reference.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 _DEFAULT_REDACT_PATTERNS: tuple[str, ...] = (
     r"sk-ant-[A-Za-z0-9_-]{20,}",  # Anthropic
@@ -120,8 +120,12 @@ class Settings(BaseSettings):
     # value; there's no opt-out. Telegram bot uses polling (no port).
     api_host: str = Field(default="127.0.0.1", validation_alias="AIDEVSWARM_API_HOST")
     api_port: int = Field(default=8080, validation_alias="AIDEVSWARM_API_PORT")
-    # Comma-separated list in the env var; Pydantic parses it into list[int].
-    telegram_allowed_user_ids: list[int] = Field(
+    # Comma-separated list in the env var; the field_validator below
+    # parses it into list[int]. NoDecode disables pydantic-settings's
+    # built-in JSON list decoder so an empty string `""` doesn't error
+    # before our validator runs (matters because `.env.example` ships
+    # this field as `AIDEVSWARM_TELEGRAM_ALLOWED_USER_IDS=`).
+    telegram_allowed_user_ids: Annotated[list[int], NoDecode] = Field(
         default_factory=list,
         validation_alias="AIDEVSWARM_TELEGRAM_ALLOWED_USER_IDS",
     )
@@ -129,7 +133,7 @@ class Settings(BaseSettings):
         default="claude-haiku-4-5",
         validation_alias="AIDEVSWARM_HAIKU_MODEL",
     )
-    redact_patterns: list[str] = Field(
+    redact_patterns: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: list(_DEFAULT_REDACT_PATTERNS),
         validation_alias="AIDEVSWARM_REDACT_PATTERNS",
     )
@@ -154,6 +158,8 @@ class Settings(BaseSettings):
     @field_validator("telegram_allowed_user_ids", mode="before")
     @classmethod
     def _split_allowed_ids(cls, v: object) -> object:
+        if v is None or v == "":
+            return []
         if isinstance(v, str):
             return [int(p.strip()) for p in v.split(",") if p.strip()]
         return v
@@ -161,6 +167,9 @@ class Settings(BaseSettings):
     @field_validator("redact_patterns", mode="before")
     @classmethod
     def _split_redact_patterns(cls, v: object) -> object:
+        if v is None or v == "":
+            # Empty env var -> fall back to the default pattern set.
+            return list(_DEFAULT_REDACT_PATTERNS)
         if isinstance(v, str):
             return [p.strip() for p in v.split(",") if p.strip()]
         return v

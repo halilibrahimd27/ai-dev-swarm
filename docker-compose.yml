@@ -13,5 +13,12 @@
 #
 # Requires Docker Compose >= 2.20 (include: directive).
 
+# Pin the project name so containers + volumes carry the same labels
+# regardless of which compose file the operator invokes. Without this,
+# `docker compose up` from the repo root would use the directory name
+# (`ai-dev-swarm-kit`) and create a SEPARATE set of volumes from
+# `docker compose -f docker/compose.yml up`.
+name: aidevswarm
+
 include:
   - docker/compose.yml

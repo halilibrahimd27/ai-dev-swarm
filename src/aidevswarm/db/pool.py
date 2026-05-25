@@ -36,7 +36,7 @@ def open_pool(settings: Settings) -> ConnectionPool:
             timeout=settings.pg_pool_timeout,
             max_lifetime=settings.pg_pool_max_lifetime,
         )
-        _pool = ConnectionPool(
+        new_pool = ConnectionPool(
             conninfo=settings.pg_dsn,
             min_size=settings.pg_pool_min,
             max_size=settings.pg_pool_max,
@@ -46,7 +46,14 @@ def open_pool(settings: Settings) -> ConnectionPool:
         )
         # Wait for the pool to actually have at least one usable
         # connection; surface a clear error early if Postgres is down.
-        _pool.wait(timeout=float(settings.pg_pool_timeout))
+        # If wait() raises, tear down the half-open pool BEFORE bubbling
+        # so a retry from a later fixture / startup gets a clean slate.
+        try:
+            new_pool.wait(timeout=float(settings.pg_pool_timeout))
+        except Exception:
+            new_pool.close()
+            raise
+        _pool = new_pool
         return _pool
 
 

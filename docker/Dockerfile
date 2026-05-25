@@ -54,6 +54,14 @@ WORKDIR /workspace
 
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /app/src /workspace/src
+# Phase 6 auto-migrate path: the bootstrap.run_migrations() helper
+# walks up from src/aidevswarm/ looking for alembic.ini, then loads
+# the migration scripts from ./alembic/. Both must be in the image.
+COPY alembic.ini /workspace/alembic.ini
+COPY alembic /workspace/alembic
+# Phase 5 static web UI served by FastAPI at "/". The orchestrator
+# resolves this path relative to src/aidevswarm/orchestrator/.
+COPY ui /workspace/ui
 
 USER aidevswarm
 

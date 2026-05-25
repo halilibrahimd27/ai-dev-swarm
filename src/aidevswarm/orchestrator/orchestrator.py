@@ -10,7 +10,9 @@ with in-memory fakes.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
+from aidevswarm.api import build_app, run_server
 from aidevswarm.crews import CrewaiBuildCrew, CrewaiIdeationCrew, CrewaiPlanningCrew
 from aidevswarm.crews.ideation.novelty import NoveltyChecker
 from aidevswarm.crews.replanning import CrewaiReplanningCrew
@@ -22,11 +24,13 @@ from aidevswarm.db.repositories import (
 )
 from aidevswarm.db.sessions import PsycopgMilestoneSessionRepo
 from aidevswarm.logging_config import configure_logging, get_logger
-from aidevswarm.observability import bootstrap_phoenix
+from aidevswarm.observability import EventBridge, SecretRedactor, bootstrap_phoenix
 from aidevswarm.orchestrator.auto_split import AutoSplitPredictor
+from aidevswarm.orchestrator.command_router import CommandRouter
 from aidevswarm.orchestrator.scheduler import IntervalJob, ProjectPool, Scheduler
 from aidevswarm.orchestrator.tick import Tick, TickDeps
 from aidevswarm.settings import Settings, load_settings
+from aidevswarm.steering import PsycopgSteeringRepo
 from aidevswarm.tools import (
     DefaultTokenBudget,
     DockerSandbox,
@@ -37,6 +41,10 @@ from aidevswarm.tools import (
     WorkspaceManager,
 )
 from aidevswarm.tools.mcp_config import load_mcp_servers
+
+# The UI directory ships at the repo root; in the docker image it lands
+# at /workspace/ui via the Dockerfile.
+_UI_DIR = Path(__file__).resolve().parents[3] / "ui"
 
 
 def _build_tick(settings: Settings) -> Tick:
@@ -91,6 +99,30 @@ async def _async_main() -> None:
 
     tick = _build_tick(settings)
     project_repo = tick._d.project_repo
+    milestone_repo = tick._d.milestone_repo
+    pool_obj = open_pool(settings)  # already opened in _build_tick; reuse
+    steering_repo = PsycopgSteeringRepo(pool_obj)
+
+    # Phase 5 control plane wiring — FastAPI + SSE + Telegram all share
+    # one EventBridge + one CommandRouter + one SecretRedactor.
+    bridge = EventBridge()
+    bridge.attach(asyncio.get_running_loop())
+    bridge.install_crewai_handlers()
+    redactor = SecretRedactor(settings.redact_patterns)
+    router = CommandRouter(
+        project_repo=project_repo,
+        steering_repo=steering_repo,
+        kill_switch=tick._d.kill_switch,
+    )
+    api_app = build_app(
+        settings=settings,
+        project_repo=project_repo,
+        milestone_repo=milestone_repo,
+        bridge=bridge,
+        router=router,
+        redactor=redactor,
+        ui_dir=_UI_DIR if _UI_DIR.is_dir() else None,
+    )
 
     async def ideation_cron() -> None:
         log.info("ideation_cron.run")
@@ -103,16 +135,20 @@ async def _async_main() -> None:
             IntervalJob("ideation_cron", 60.0 * 60.0 * 24.0, ideation_cron),
         ]
     )
-    pool = ProjectPool(
+    project_pool = ProjectPool(
         tick=tick,
         project_repo=project_repo,
         concurrency=settings.build_concurrency,
         poll_seconds=float(settings.tick_seconds),
     )
     try:
-        # Both run_forever loops live in the same event loop; gather()
-        # propagates the first failure to the operator.
-        await asyncio.gather(scheduler.run_forever(), pool.run_forever())
+        # Scheduler + ProjectPool + FastAPI all live on the same loop.
+        # gather() propagates the first failure to the operator.
+        await asyncio.gather(
+            scheduler.run_forever(),
+            project_pool.run_forever(),
+            run_server(api_app, settings.api_host, settings.api_port),
+        )
     finally:
         close_pool()
 
