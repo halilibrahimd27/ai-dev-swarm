@@ -47,22 +47,36 @@ def _parse(entry: object) -> McpStdioServerConfig | None:
     """Build a :class:`McpStdioServerConfig` from a raw mapping."""
     if not isinstance(entry, Mapping):
         return None
-    command = entry.get("command")
-    if not isinstance(command, str) or not command:
+    command = _str_or_none(entry.get("command"))
+    if not command:
         return None
-    args = entry.get("args") or []
-    if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+    args = _string_list(entry.get("args") or [])
+    if args is None:
         return None
-    env = entry.get("env") or {}
-    if not isinstance(env, Mapping) or not all(
-        isinstance(k, str) and isinstance(v, str) for k, v in env.items()
-    ):
-        env = {}
-    config: dict[str, Any] = {
-        "type": "stdio",
-        "command": command,
-        "args": list(args),
-    }
+    config: dict[str, Any] = {"type": "stdio", "command": command, "args": args}
+    env = _string_string_dict(entry.get("env") or {})
     if env:
-        config["env"] = dict(env)
+        config["env"] = env
     return cast(McpStdioServerConfig, config)
+
+
+def _str_or_none(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _string_list(value: object) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    if not all(isinstance(a, str) for a in value):
+        return None
+    return list(value)
+
+
+def _string_string_dict(value: object) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in value.items():
+        if isinstance(k, str) and isinstance(v, str):
+            out[k] = v
+    return out
