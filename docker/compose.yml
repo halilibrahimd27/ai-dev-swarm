@@ -1,0 +1,84 @@
+# ai-dev-swarm — base stack.
+#
+# Brings up Postgres+pgvector, Redis, and the orchestrator container.
+# Phoenix is intentionally NOT included — Phase 1 adds it via
+# `docker/phoenix.yml` (compose -f docker/compose.yml -f docker/phoenix.yml).
+
+name: aidevswarm
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: aidevswarm-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aidevswarm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: ${POSTGRES_DB:-aidevswarm}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-aidevswarm}", "-d", "${POSTGRES_DB:-aidevswarm}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: aidevswarm-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: aidevswarm-orchestrator
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      AIDEVSWARM_PG_HOST: postgres
+      AIDEVSWARM_PG_PORT: "5432"
+      AIDEVSWARM_REDIS_HOST: redis
+      AIDEVSWARM_REDIS_PORT: "6379"
+      AIDEVSWARM_WORKSPACES_DIR: /workspace/workspaces
+      POSTGRES_USER: ${POSTGRES_USER:-aidevswarm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: ${POSTGRES_DB:-aidevswarm}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_OWNER: ${GITHUB_OWNER:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    volumes:
+      - ../workspaces:/workspace/workspaces
+    restart: unless-stopped
+    healthcheck:
+      # The orchestrator's healthcheck is the process being up; we keep
+      # it lightweight in Phase 0 (the FastAPI /health endpoint lands in
+      # Phase 5). `pgrep` is in the slim base image's procps subset; if
+      # absent the check still exits 0 because we explicitly fall back.
+      test: ["CMD-SHELL", "pgrep -f 'python -m aidevswarm' >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+volumes:
+  postgres_data:
+  redis_data:
