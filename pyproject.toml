@@ -20,10 +20,11 @@ dependencies = [
   "redis>=5.0,<6.0",
   "alembic>=1.13,<2.0",
 
-  # HTTP / control plane (FastAPI is wired in Phase 5; install now for env stability)
+  # HTTP / control plane (Phase 5)
   "fastapi>=0.119,<1.0",
   "uvicorn[standard]>=0.32,<0.33",
   "httpx>=0.28,<0.29",
+  "sse-starlette>=2.1,<3.0",
 
   # Telegram (one-way send in Phase 0; rich control in Phase 5)
   "python-telegram-bot>=21.6,<22.0",

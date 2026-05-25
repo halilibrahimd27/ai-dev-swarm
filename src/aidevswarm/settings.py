@@ -9,8 +9,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_DEFAULT_REDACT_PATTERNS: tuple[str, ...] = (
+    r"sk-ant-[A-Za-z0-9_-]{20,}",  # Anthropic
+    r"sk-[A-Za-z0-9_-]{32,}",  # OpenAI-style
+    r"ghp_[A-Za-z0-9]{30,}",  # GitHub personal access token
+    r"github_pat_[A-Za-z0-9_]{50,}",
+    r"xoxb-[A-Za-z0-9-]{20,}",  # Slack bot token
+    r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b",  # JWT
+    r"\b[0-9]{8,}:[A-Za-z0-9_-]{30,}\b",  # Telegram bot token (digits:secret)
+)
 
 
 class Settings(BaseSettings):
@@ -104,6 +114,48 @@ class Settings(BaseSettings):
         default="http://phoenix:6006/v1/traces",
         validation_alias="AIDEVSWARM_PHOENIX_ENDPOINT",
     )
+
+    # --- Phase 5 control plane -------------------------------------------
+    # Loopback ONLY. The startup validator below refuses any non-loopback
+    # value; there's no opt-out. Telegram bot uses polling (no port).
+    api_host: str = Field(default="127.0.0.1", validation_alias="AIDEVSWARM_API_HOST")
+    api_port: int = Field(default=8080, validation_alias="AIDEVSWARM_API_PORT")
+    # Comma-separated list in the env var; Pydantic parses it into list[int].
+    telegram_allowed_user_ids: list[int] = Field(
+        default_factory=list,
+        validation_alias="AIDEVSWARM_TELEGRAM_ALLOWED_USER_IDS",
+    )
+    haiku_model: str = Field(
+        default="claude-haiku-4-5",
+        validation_alias="AIDEVSWARM_HAIKU_MODEL",
+    )
+    redact_patterns: list[str] = Field(
+        default_factory=lambda: list(_DEFAULT_REDACT_PATTERNS),
+        validation_alias="AIDEVSWARM_REDACT_PATTERNS",
+    )
+
+    @field_validator("api_host")
+    @classmethod
+    def _enforce_loopback(cls, v: str) -> str:
+        if v not in {"127.0.0.1", "localhost"}:
+            raise ValueError(
+                f"AIDEVSWARM_API_HOST must be loopback (127.0.0.1 or localhost), got {v!r}"
+            )
+        return v
+
+    @field_validator("telegram_allowed_user_ids", mode="before")
+    @classmethod
+    def _split_allowed_ids(cls, v: object) -> object:
+        if isinstance(v, str):
+            return [int(p.strip()) for p in v.split(",") if p.strip()]
+        return v
+
+    @field_validator("redact_patterns", mode="before")
+    @classmethod
+    def _split_redact_patterns(cls, v: object) -> object:
+        if isinstance(v, str):
+            return [p.strip() for p in v.split(",") if p.strip()]
+        return v
 
     @property
     def pg_dsn(self) -> str:

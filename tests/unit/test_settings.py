@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from aidevswarm.settings import Settings, load_settings
 
@@ -40,3 +41,35 @@ def test_pg_dsn_includes_password(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "user=u" in dsn
     assert "dbname=db" in dsn
     assert "password=topsecret" in dsn
+
+
+def test_api_host_loopback_only() -> None:
+    """Phase 5 invariant: the control plane never binds beyond loopback."""
+    assert Settings(AIDEVSWARM_API_HOST="127.0.0.1").api_host == "127.0.0.1"
+    assert Settings(AIDEVSWARM_API_HOST="localhost").api_host == "localhost"
+    with pytest.raises(ValidationError):
+        Settings(AIDEVSWARM_API_HOST="0.0.0.0")
+    with pytest.raises(ValidationError):
+        Settings(AIDEVSWARM_API_HOST="10.0.0.5")
+
+
+def test_telegram_allowed_user_ids_parses_csv() -> None:
+    s = Settings(AIDEVSWARM_TELEGRAM_ALLOWED_USER_IDS="111,222,333")
+    assert s.telegram_allowed_user_ids == [111, 222, 333]
+    # Empty -> empty list, not [0]
+    assert Settings(AIDEVSWARM_TELEGRAM_ALLOWED_USER_IDS="").telegram_allowed_user_ids == []
+
+
+def test_redact_patterns_default_covers_common_secrets() -> None:
+    """Defaults must catch anthropic, github, slack, jwt, telegram tokens."""
+    patterns = Settings().redact_patterns
+    joined = " | ".join(patterns)
+    assert "sk-ant" in joined
+    assert "ghp_" in joined
+    assert "eyJ" in joined  # JWT prefix
+
+
+def test_redact_patterns_csv_override() -> None:
+    """Operators can replace the default list via env var."""
+    s = Settings(AIDEVSWARM_REDACT_PATTERNS="foo,bar")
+    assert s.redact_patterns == ["foo", "bar"]
