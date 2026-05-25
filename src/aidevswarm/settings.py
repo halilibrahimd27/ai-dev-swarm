@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     pg_host: str = Field(default="postgres", validation_alias="AIDEVSWARM_PG_HOST")
     pg_port: int = Field(default=5432, validation_alias="AIDEVSWARM_PG_PORT")
 
+    # psycopg_pool.ConnectionPool tuning. Defaults match Phase 1 mandate.
+    pg_pool_min: int = Field(default=4, validation_alias="AIDEVSWARM_PG_POOL_MIN")
+    pg_pool_max: int = Field(default=20, validation_alias="AIDEVSWARM_PG_POOL_MAX")
+    pg_pool_timeout: int = Field(default=10, validation_alias="AIDEVSWARM_PG_POOL_TIMEOUT")
+    pg_pool_max_lifetime: int = Field(
+        default=30 * 60, validation_alias="AIDEVSWARM_PG_POOL_MAX_LIFETIME"
+    )
+
     # --- Redis ------------------------------------------------------------
     redis_host: str = Field(default="redis", validation_alias="AIDEVSWARM_REDIS_HOST")
     redis_port: int = Field(default=6379, validation_alias="AIDEVSWARM_REDIS_PORT")

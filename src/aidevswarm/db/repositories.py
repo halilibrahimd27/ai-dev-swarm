@@ -1,23 +1,21 @@
-"""psycopg3-backed repository implementations.
+"""psycopg3-backed repository implementations (pool-based).
 
-These are the production impls; tests substitute in-memory fakes defined
-in ``tests/fakes.py`` that satisfy the same :mod:`aidevswarm.db.protocols`
-interfaces.
-
-Phase 1 replaces the per-call ``open_connection`` with a long-lived
-``psycopg_pool.ConnectionPool``; the public method shapes stay the same.
+Each repo takes a :class:`psycopg_pool.ConnectionPool` and acquires
+connections via ``with self._pool.connection() as conn:``. Tests
+substitute in-memory fakes in ``tests/fakes.py`` that satisfy the same
+:mod:`aidevswarm.db.protocols` interfaces.
 """
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 from uuid import UUID
 
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
+from psycopg_pool import ConnectionPool
 
 from aidevswarm._time import utc_now
-from aidevswarm.db.connection import open_connection
 from aidevswarm.schemas import (
     Milestone,
     MilestoneSpec,
@@ -26,7 +24,6 @@ from aidevswarm.schemas import (
     ProjectSpec,
     ProjectState,
 )
-from aidevswarm.settings import Settings
 
 
 def _project_from_row(row: dict[str, Any]) -> Project:
@@ -59,14 +56,11 @@ def _milestone_from_row(row: dict[str, Any]) -> Milestone:
 class PsycopgProjectRepo:
     """Concrete :class:`aidevswarm.db.protocols.ProjectRepo`."""
 
-    def __init__(self, settings: Settings) -> None:
-        self._settings = settings
-
-    def _conn(self) -> Any:
-        return open_connection(self._settings)
+    def __init__(self, pool: ConnectionPool) -> None:
+        self._pool = pool
 
     def create(self, project: Project) -> Project:
-        with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
                 INSERT INTO projects (id, name, spec, state, github_repo,
@@ -84,19 +78,18 @@ class PsycopgProjectRepo:
                     project.updated_at,
                 ),
             )
-            row = cast(dict[str, Any], cur.fetchone())
-            conn.commit()
+            row = cur.fetchone()
+            assert row is not None, "INSERT ... RETURNING * always yields a row"
             return _project_from_row(row)
 
     def get(self, project_id: UUID) -> Project | None:
-        with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM projects WHERE id = %s", (str(project_id),))
             row = cur.fetchone()
-            return _project_from_row(cast(dict[str, Any], row)) if row else None
+            return _project_from_row(row) if row else None
 
     def get_active(self) -> Project | None:
-        """Return the project currently in a non-terminal, non-queued state."""
-        with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
                 SELECT * FROM projects
@@ -107,15 +100,15 @@ class PsycopgProjectRepo:
                 """
             )
             row = cur.fetchone()
-            return _project_from_row(cast(dict[str, Any], row)) if row else None
+            return _project_from_row(row) if row else None
 
     def list_by_state(self, state: ProjectState) -> list[Project]:
-        with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM projects WHERE state = %s", (state.value,))
-            return [_project_from_row(cast(dict[str, Any], r)) for r in cur.fetchall()]
+            return [_project_from_row(r) for r in cur.fetchall()]
 
     def update_state(self, project_id: UUID, new_state: ProjectState) -> Project:
-        with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
                 UPDATE projects SET state = %s, updated_at = %s
@@ -127,30 +120,25 @@ class PsycopgProjectRepo:
             row = cur.fetchone()
             if row is None:
                 raise LookupError(f"project {project_id} not found")
-            conn.commit()
-            return _project_from_row(cast(dict[str, Any], row))
+            return _project_from_row(row)
 
     def set_github_repo(self, project_id: UUID, repo_url: str) -> None:
-        with self._conn() as conn, conn.cursor() as cur:
+        with self._pool.connection() as conn, conn.cursor() as cur:
             cur.execute(
                 "UPDATE projects SET github_repo = %s, updated_at = %s WHERE id = %s",
                 (repo_url, utc_now(), str(project_id)),
             )
-            conn.commit()
 
 
 class PsycopgMilestoneRepo:
     """Concrete :class:`aidevswarm.db.protocols.MilestoneRepo`."""
 
-    def __init__(self, settings: Settings) -> None:
-        self._settings = settings
-
-    def _conn(self) -> Any:
-        return open_connection(self._settings)
+    def __init__(self, pool: ConnectionPool) -> None:
+        self._pool = pool
 
     def create_many(self, project_id: UUID, specs: list[MilestoneSpec]) -> list[Milestone]:
         rows: list[dict[str, Any]] = []
-        with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             for ordinal, spec in enumerate(specs):
                 cur.execute(
                     """
@@ -166,20 +154,21 @@ class PsycopgMilestoneRepo:
                         MilestoneState.PENDING.value,
                     ),
                 )
-                rows.append(cast(dict[str, Any], cur.fetchone()))
-            conn.commit()
+                row = cur.fetchone()
+                assert row is not None, "INSERT ... RETURNING * always yields a row"
+                rows.append(row)
         return [_milestone_from_row(r) for r in rows]
 
     def list_for_project(self, project_id: UUID) -> list[Milestone]:
-        with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 "SELECT * FROM milestones WHERE project_id = %s ORDER BY ordinal",
                 (str(project_id),),
             )
-            return [_milestone_from_row(cast(dict[str, Any], r)) for r in cur.fetchall()]
+            return [_milestone_from_row(r) for r in cur.fetchall()]
 
     def next_pending(self, project_id: UUID) -> Milestone | None:
-        with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
                 SELECT * FROM milestones
@@ -190,10 +179,10 @@ class PsycopgMilestoneRepo:
                 (str(project_id),),
             )
             row = cur.fetchone()
-            return _milestone_from_row(cast(dict[str, Any], row)) if row else None
+            return _milestone_from_row(row) if row else None
 
     def update_state(self, milestone_id: UUID, new_state: MilestoneState) -> Milestone:
-        with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
                 UPDATE milestones SET state = %s, updated_at = %s
@@ -204,8 +193,7 @@ class PsycopgMilestoneRepo:
             row = cur.fetchone()
             if row is None:
                 raise LookupError(f"milestone {milestone_id} not found")
-            conn.commit()
-            return _milestone_from_row(cast(dict[str, Any], row))
+            return _milestone_from_row(row)
 
     def record_attempt(
         self,
@@ -215,7 +203,7 @@ class PsycopgMilestoneRepo:
         commit_hash: str | None,
     ) -> Milestone:
         new_state = MilestoneState.DONE if success else MilestoneState.FAILED
-        with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
                 UPDATE milestones
@@ -237,18 +225,14 @@ class PsycopgMilestoneRepo:
             row = cur.fetchone()
             if row is None:
                 raise LookupError(f"milestone {milestone_id} not found")
-            conn.commit()
-            return _milestone_from_row(cast(dict[str, Any], row))
+            return _milestone_from_row(row)
 
 
 class PsycopgTokenLogRepo:
     """Concrete :class:`aidevswarm.db.protocols.TokenLogRepo`."""
 
-    def __init__(self, settings: Settings) -> None:
-        self._settings = settings
-
-    def _conn(self) -> Any:
-        return open_connection(self._settings)
+    def __init__(self, pool: ConnectionPool) -> None:
+        self._pool = pool
 
     def record(
         self,
@@ -261,7 +245,7 @@ class PsycopgTokenLogRepo:
         output_tokens: int,
         cost_usd: float,
     ) -> None:
-        with self._conn() as conn, conn.cursor() as cur:
+        with self._pool.connection() as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO token_log
@@ -279,10 +263,9 @@ class PsycopgTokenLogRepo:
                     cost_usd,
                 ),
             )
-            conn.commit()
 
     def daily_total_tokens(self) -> int:
-        with self._conn() as conn, conn.cursor() as cur:
+        with self._pool.connection() as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT COALESCE(SUM(input_tokens + output_tokens), 0)
@@ -294,7 +277,7 @@ class PsycopgTokenLogRepo:
             return int(row[0]) if row and row[0] is not None else 0
 
     def milestone_total_tokens(self, milestone_id: UUID) -> int:
-        with self._conn() as conn, conn.cursor() as cur:
+        with self._pool.connection() as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT COALESCE(SUM(input_tokens + output_tokens), 0)

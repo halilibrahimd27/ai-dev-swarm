@@ -1,0 +1,75 @@
+"""50-thread ``SELECT 1`` smoke test for the psycopg3 connection pool.
+
+Skips automatically when Postgres is not reachable, so the gauntlet
+stays green in CI without Docker.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import pytest
+from psycopg_pool import ConnectionPool
+
+from aidevswarm.db.pool import close_pool, open_pool
+from aidevswarm.settings import Settings
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(scope="module")
+def live_pool() -> Iterator[ConnectionPool]:
+    """Open a small pool against the local Postgres; skip if unreachable.
+
+    Resolves the DB host from the env when set (compose-internal
+    `postgres`), otherwise falls back to `localhost` so tests run from
+    the host against the docker-exposed 5432 port.
+    """
+    import os
+
+    os.environ.setdefault("AIDEVSWARM_PG_HOST", "localhost")
+    settings = Settings()
+    try:
+        pool = open_pool(settings)
+    except Exception as exc:  # pool open includes a connect-and-wait
+        pytest.skip(f"Postgres unavailable: {exc}")
+    try:
+        yield pool
+    finally:
+        close_pool()
+
+
+def _select_one(pool: ConnectionPool) -> int:
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1")
+        row = cur.fetchone()
+        assert row is not None
+        return int(row[0])
+
+
+def test_50_concurrent_select_1_under_2_seconds(live_pool: ConnectionPool) -> None:
+    """All 50 worker threads must finish their SELECT 1 within 2 seconds."""
+    n = 50
+    start = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=n) as executor:
+        futures = [executor.submit(_select_one, live_pool) for _ in range(n)]
+        results = [f.result(timeout=2.0) for f in as_completed(futures)]
+    elapsed = time.perf_counter() - start
+
+    assert len(results) == n
+    assert all(r == 1 for r in results)
+    assert elapsed < 2.0, f"50 concurrent SELECT 1 took {elapsed:.2f}s, expected <2s"
+
+
+def test_pool_handoff_recycles_connections(live_pool: ConnectionPool) -> None:
+    """A burst of more queries than max_size must still complete."""
+    # Two consecutive bursts of 30 each — exceeds the default max_size=20.
+    # The pool should hand connections out, take them back, and re-vend
+    # them to the next caller without timing out.
+    for _ in range(2):
+        with ThreadPoolExecutor(max_workers=30) as executor:
+            futures = [executor.submit(_select_one, live_pool) for _ in range(30)]
+            results = [f.result(timeout=5.0) for f in as_completed(futures)]
+        assert results == [1] * 30

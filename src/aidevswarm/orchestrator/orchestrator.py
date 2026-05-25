@@ -1,9 +1,10 @@
 """Orchestrator entry point.
 
-``main()`` builds the production dependency graph (psycopg3 repos, real
-crews, RedisKillSwitch, DockerSandbox, TelegramNotifier, GitHubPublisher)
-and runs the scheduler forever. Tests don't import this module — they
-construct :class:`Tick` directly with in-memory fakes.
+``main()`` builds the production dependency graph (pool-backed psycopg3
+repos, real CrewAI crews, RedisKillSwitch, DockerSandbox,
+TelegramNotifier, GitHubPublisher) and runs the scheduler forever.
+Tests don't import this module — they construct :class:`Tick` directly
+with in-memory fakes.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import asyncio
 
 from aidevswarm.crews import CrewaiBuildCrew, CrewaiIdeationCrew, CrewaiPlanningCrew
+from aidevswarm.db.pool import close_pool, open_pool
 from aidevswarm.db.repositories import (
     PsycopgMilestoneRepo,
     PsycopgProjectRepo,
@@ -19,7 +21,7 @@ from aidevswarm.db.repositories import (
 from aidevswarm.logging_config import configure_logging, get_logger
 from aidevswarm.orchestrator.scheduler import IntervalJob, Scheduler
 from aidevswarm.orchestrator.tick import Tick, TickDeps
-from aidevswarm.settings import load_settings
+from aidevswarm.settings import Settings, load_settings
 from aidevswarm.tools import (
     DefaultTokenBudget,
     DockerSandbox,
@@ -31,20 +33,19 @@ from aidevswarm.tools import (
 )
 
 
-def _build_tick(settings: object) -> Tick:
+def _build_tick(settings: Settings) -> Tick:
     """Build the production :class:`Tick` from real adapters."""
-    from aidevswarm.settings import Settings
+    pool = open_pool(settings)
 
-    assert isinstance(settings, Settings)
+    project_repo = PsycopgProjectRepo(pool)
+    milestone_repo = PsycopgMilestoneRepo(pool)
+    token_repo = PsycopgTokenLogRepo(pool)
 
-    project_repo = PsycopgProjectRepo(settings)
-    milestone_repo = PsycopgMilestoneRepo(settings)
-    token_repo = PsycopgTokenLogRepo(settings)
-    # PgvectorMemory and budget guard are constructed but unused by the
-    # tick path in Phase 0 — the Ideation crew and CrewAI agent layer
-    # call them directly in later phases. Hold references so they cannot
-    # be garbage-collected mid-tick if the orchestrator is extended.
-    _ = PgvectorMemory(settings)
+    # PgvectorMemory and budget guard live alongside the tick but are
+    # not yet exercised by the Phase 1 tick path — they are wired into
+    # CrewAI agents in Phase 3+. Keep references so they cannot be GC'd
+    # if a later phase reads them off the orchestrator.
+    _ = PgvectorMemory(pool)
     _ = DefaultTokenBudget(settings, token_repo)
 
     deps = TickDeps(
@@ -88,7 +89,10 @@ async def _async_main() -> None:
             IntervalJob("ideation_cron", 60.0 * 60.0 * 24.0, ideation_cron),
         ]
     )
-    await scheduler.run_forever()
+    try:
+        await scheduler.run_forever()
+    finally:
+        close_pool()
 
 
 def main() -> None:
