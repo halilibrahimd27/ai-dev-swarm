@@ -71,9 +71,9 @@ services:
     healthcheck:
       # The orchestrator's healthcheck is the process being up; we keep
       # it lightweight in Phase 0 (the FastAPI /health endpoint lands in
-      # Phase 5). `pgrep` is in the slim base image's procps subset; if
-      # absent the check still exits 0 because we explicitly fall back.
-      test: ["CMD-SHELL", "pgrep -f 'python -m aidevswarm' >/dev/null || exit 1"]
+      # Phase 5). `kill -0 1` is a shell builtin and works on slim images
+      # that ship without procps.
+      test: ["CMD-SHELL", "kill -0 1 2>/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 6

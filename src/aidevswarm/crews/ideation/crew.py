@@ -29,7 +29,10 @@ class CrewaiIdeationCrew:
         self._scout_prompt = load_prompt(_CREW_DIR, "trend_scout")
         self._ideator_prompt = load_prompt(_CREW_DIR, "ideator")
         self._critic_prompt = load_prompt(_CREW_DIR, "critic")
-        self._crew = self._build_crew()
+        # CrewAI's Agent(llm=...) eagerly contacts the LLM provider, so
+        # the actual crew is constructed lazily on the first run() call
+        # to let the orchestrator boot even before an API key is set.
+        self._crew: Any | None = None
 
     def _build_crew(self) -> Any:
         from crewai import Agent, Crew, Process, Task  # local import
@@ -84,6 +87,8 @@ class CrewaiIdeationCrew:
 
     def run(self) -> list[ScoredIdea]:
         """Execute the crew and parse the Critic's output into ScoredIdea."""
+        if self._crew is None:
+            self._crew = self._build_crew()
         result = self._crew.kickoff()
         parsed = self._parse(result)
         self._log.info("ideation.done", count=len(parsed))

@@ -23,23 +23,27 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY pyproject.toml /app/
+COPY pyproject.toml README.md /app/
 # Lockfile may not exist on first build; uv handles either case.
 COPY uv.lock* /app/
+# Hatchling validates the project README during the editable install
+# below, so a stub of the package src tree must be present.
+COPY src /app/src
 
+# `uv sync` builds + installs both the runtime deps and the project
+# itself in one shot, using /opt/venv (see UV_PROJECT_ENVIRONMENT). No
+# follow-up editable-install step is needed.
 RUN uv venv /opt/venv \
  && uv sync --no-dev --frozen 2>/dev/null \
  || uv sync --no-dev
-
-COPY src /app/src
-RUN uv pip install --no-deps -e /app
 
 # ---------------------------------------------------------------------------
 FROM python:${PYTHON_VERSION}-slim AS runtime
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/workspace/src
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates \
