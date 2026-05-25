@@ -50,9 +50,7 @@ class CrewaiPlanningCrew:
     def _build_crew(self, project_id: UUID, spec: ProjectSpec) -> Any:
         from crewai import Agent, Crew, Process, Task
 
-        pm_backstory = render_prompt(
-            self._pm_template, steering_notes=self._pull(project_id, "PM")
-        )
+        pm_backstory = render_prompt(self._pm_template, steering_notes=self._pull(project_id, "PM"))
         arch_backstory = render_prompt(
             self._arch_template, steering_notes=self._pull(project_id, "Architect")
         )

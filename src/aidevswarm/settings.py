@@ -85,9 +85,7 @@ class Settings(BaseSettings):
     )
 
     # --- Observability (Arize Phoenix) ------------------------------------
-    phoenix_enabled: bool = Field(
-        default=True, validation_alias="AIDEVSWARM_PHOENIX_ENABLED"
-    )
+    phoenix_enabled: bool = Field(default=True, validation_alias="AIDEVSWARM_PHOENIX_ENABLED")
     phoenix_endpoint: str = Field(
         default="http://phoenix:6006/v1/traces",
         validation_alias="AIDEVSWARM_PHOENIX_ENDPOINT",

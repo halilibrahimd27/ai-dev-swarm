@@ -34,9 +34,7 @@ def bootstrap_phoenix(settings: Settings) -> None:
             auto_instrument=True,
             batch=True,
         )
-        CrewAIInstrumentor().instrument(
-            skip_dep_check=True, tracer_provider=tracer_provider
-        )
+        CrewAIInstrumentor().instrument(skip_dep_check=True, tracer_provider=tracer_provider)
         log.info("phoenix.bootstrap_ok", endpoint=settings.phoenix_endpoint)
     except Exception as exc:  # pragma: no cover - external service path
         # Tracing collector unreachable / misconfigured -> keep running.
