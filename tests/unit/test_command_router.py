@@ -1,0 +1,204 @@
+"""Unit tests for :class:`CommandRouter`.
+
+Drives each command through the router using in-memory fakes for
+``ProjectRepo``, ``SteeringRepo``, and ``KillSwitch``. Asserts both
+the side-effects (state transition, note row, kill-switch trip) and
+the ``CommandResult`` returned.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+from uuid import UUID, uuid4
+
+from aidevswarm.orchestrator.command_router import CommandRouter
+from aidevswarm.schemas import (
+    AbortProject,
+    Approve,
+    DropAndStartNew,
+    InjectNote,
+    KillSwitch,
+    ListState,
+    PauseProject,
+    Project,
+    ProjectSpec,
+    ProjectState,
+    RejectIdea,
+    Rescope,
+    ResumeProject,
+    ShowTranscript,
+    SwitchToIdea,
+    TransformProject,
+)
+from aidevswarm.tools.kill_switch import InMemoryKillSwitch
+from tests.fakes import InMemoryProjectRepo
+
+
+@dataclass
+class _FakeSteeringRepo:
+    """In-memory steering repo for the router tests."""
+
+    notes: list[dict[str, Any]] = field(default_factory=list)
+    _counter: int = 0
+
+    def add_note(self, project_id: UUID, body: str, *, author: str = "human") -> int:
+        self._counter += 1
+        self.notes.append(
+            {"id": self._counter, "project_id": project_id, "body": body, "author": author}
+        )
+        return self._counter
+
+    def pull_unconsumed(self, project_id: UUID, role: str) -> list[str]:
+        # Not exercised by router tests, but the Protocol needs both methods.
+        return []
+
+
+def _spec() -> ProjectSpec:
+    return ProjectSpec(
+        title="t", summary="s", rationale="r", stack=["python"], tags=["x"], score=85
+    )
+
+
+def _make_router(
+    *,
+    project: Project | None = None,
+) -> tuple[CommandRouter, InMemoryProjectRepo, _FakeSteeringRepo, InMemoryKillSwitch]:
+    project_repo = InMemoryProjectRepo()
+    if project is not None:
+        project_repo.create(project)
+    steering = _FakeSteeringRepo()
+    kill = InMemoryKillSwitch()
+    router = CommandRouter(project_repo=project_repo, steering_repo=steering, kill_switch=kill)
+    return router, project_repo, steering, kill
+
+
+# ---------------------------------------------------------------------------
+# Non-destructive commands
+# ---------------------------------------------------------------------------
+
+
+def test_approve_moves_project_to_building() -> None:
+    project = Project(name="p", spec=_spec(), state=ProjectState.AWAITING_APPROVAL)
+    router, project_repo, _, _ = _make_router(project=project)
+    result = router.dispatch(Approve(project_id=project.id))
+    assert result.ok
+    snapshot = project_repo.get(project.id)
+    assert snapshot is not None
+    assert snapshot.state is ProjectState.BUILDING
+
+
+def test_approve_refuses_wrong_state() -> None:
+    project = Project(name="p", spec=_spec(), state=ProjectState.BUILDING)
+    router, _, _, _ = _make_router(project=project)
+    result = router.dispatch(Approve(project_id=project.id))
+    assert not result.ok
+    assert "awaiting_approval" in result.detail
+
+
+def test_approve_refuses_unknown_project() -> None:
+    router, _, _, _ = _make_router()
+    result = router.dispatch(Approve(project_id=uuid4()))
+    assert not result.ok
+    assert "not found" in result.detail
+
+
+def test_inject_note_writes_a_row() -> None:
+    project = Project(name="p", spec=_spec())
+    router, _, steering, _ = _make_router(project=project)
+    result = router.dispatch(InjectNote(project_id=project.id, body="focus on tests"))
+    assert result.ok
+    assert len(steering.notes) == 1
+    assert steering.notes[0]["body"] == "focus on tests"
+
+
+def test_pause_and_resume_use_per_project_kill_switch() -> None:
+    project = Project(name="p", spec=_spec())
+    router, _, _, kill = _make_router(project=project)
+
+    router.dispatch(PauseProject(project_id=project.id))
+    assert kill.is_tripped_for(project.id)
+
+    router.dispatch(ResumeProject(project_id=project.id))
+    assert not kill.is_tripped_for(project.id)
+
+
+def test_list_state_and_show_transcript_are_acknowledgements() -> None:
+    router, _, _, _ = _make_router()
+    list_result = router.dispatch(ListState())
+    show_result = router.dispatch(ShowTranscript(project_id=uuid4()))
+    assert list_result.ok
+    assert show_result.ok
+
+
+# ---------------------------------------------------------------------------
+# Destructive commands — confirmation guard
+# ---------------------------------------------------------------------------
+
+
+def test_unconfirmed_abort_is_rejected() -> None:
+    """Bug in either surface must not skip the [Yes][No] echo."""
+    project = Project(name="p", spec=_spec())
+    router, _, _, kill = _make_router(project=project)
+    result = router.dispatch(AbortProject(project_id=project.id))  # confirmed=False
+    assert not result.ok
+    assert result.requires_confirmation is True
+    assert not kill.is_tripped_for(project.id)
+
+
+def test_confirmed_abort_trips_per_project_kill_switch() -> None:
+    project = Project(name="p", spec=_spec())
+    router, _, _, kill = _make_router(project=project)
+    result = router.dispatch(AbortProject(project_id=project.id, confirmed=True))
+    assert result.ok
+    assert kill.is_tripped_for(project.id)
+
+
+def test_confirmed_kill_switch_trips_globally() -> None:
+    router, _, _, kill = _make_router()
+    result = router.dispatch(KillSwitch(confirmed=True))
+    assert result.ok
+    assert kill.is_tripped()
+
+
+def test_confirmed_rescope_writes_a_steering_note() -> None:
+    project = Project(name="p", spec=_spec())
+    router, _, steering, _ = _make_router(project=project)
+    result = router.dispatch(Rescope(project_id=project.id, new_scope="tiny v0", confirmed=True))
+    assert result.ok
+    assert any("OPERATOR RESCOPE" in n["body"] for n in steering.notes)
+
+
+def test_confirmed_transform_writes_a_steering_note() -> None:
+    project = Project(name="p", spec=_spec())
+    router, _, steering, _ = _make_router(project=project)
+    result = router.dispatch(
+        TransformProject(project_id=project.id, new_direction="data tool", confirmed=True)
+    )
+    assert result.ok
+    assert any("OPERATOR TRANSFORM" in n["body"] for n in steering.notes)
+
+
+def test_confirmed_drop_and_start_new_kills_the_current_project() -> None:
+    project = Project(name="p", spec=_spec())
+    router, _, _, kill = _make_router(project=project)
+    router.dispatch(DropAndStartNew(project_id=project.id, confirmed=True))
+    assert kill.is_tripped_for(project.id)
+
+
+def test_confirmed_switch_to_idea_kills_current_project() -> None:
+    project = Project(name="p", spec=_spec())
+    router, _, _, kill = _make_router(project=project)
+    new_idea = uuid4()
+    result = router.dispatch(
+        SwitchToIdea(current_project_id=project.id, new_idea_id=new_idea, confirmed=True)
+    )
+    assert result.ok
+    assert kill.is_tripped_for(project.id)
+
+
+def test_confirmed_reject_idea_is_a_log_only_acknowledgement() -> None:
+    """No DB yet for ideas — Phase 5 keeps this best-effort."""
+    router, _, _, _ = _make_router()
+    result = router.dispatch(RejectIdea(idea_id=uuid4(), confirmed=True))
+    assert result.ok
