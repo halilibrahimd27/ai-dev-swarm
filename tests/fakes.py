@@ -19,6 +19,7 @@ from aidevswarm.schemas import (
     Milestone,
     MilestoneBuildResult,
     MilestoneGraph,
+    MilestoneSession,
     MilestoneSpec,
     MilestoneState,
     Project,
@@ -283,6 +284,41 @@ class FakeMemoryStore:
     def is_duplicate(self, embedding: Sequence[float], *, threshold: float = 0.92) -> bool:
         del embedding, threshold
         return False
+
+
+@dataclass
+class FakeMilestoneSessionRepo:
+    """In-memory :class:`aidevswarm.db.sessions.MilestoneSessionRepo`."""
+
+    rows: list[MilestoneSession] = field(default_factory=list)
+
+    def record(
+        self,
+        *,
+        milestone_id: UUID,
+        role: str,
+        session_id: str,
+        cost_usd: float,
+        turns: int,
+    ) -> MilestoneSession:
+        row = MilestoneSession(
+            id=len(self.rows) + 1,
+            milestone_id=milestone_id,
+            role=role,
+            session_id=session_id,
+            cost_usd=cost_usd,
+            turns=turns,
+        )
+        self.rows.append(row)
+        return row
+
+    def latest_for(self, milestone_id: UUID, role: str) -> MilestoneSession | None:
+        candidates = [
+            r for r in self.rows if r.milestone_id == milestone_id and r.role == role
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda r: r.finished_at)
 
 
 @dataclass

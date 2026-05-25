@@ -14,11 +14,14 @@ from aidevswarm.db.repositories import (
     PsycopgProjectRepo,
     PsycopgTokenLogRepo,
 )
+from aidevswarm.db.sessions import MilestoneSessionRepo, PsycopgMilestoneSessionRepo
 
 __all__ = [
     "MilestoneRepo",
+    "MilestoneSessionRepo",
     "ProjectRepo",
     "PsycopgMilestoneRepo",
+    "PsycopgMilestoneSessionRepo",
     "PsycopgProjectRepo",
     "PsycopgTokenLogRepo",
     "TokenLogRepo",

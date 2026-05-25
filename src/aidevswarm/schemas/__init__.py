@@ -20,6 +20,7 @@ from aidevswarm.schemas.project import (
     ProjectSpec,
     ProjectState,
 )
+from aidevswarm.schemas.session import MilestoneSession
 
 __all__ = [
     "TERMINAL_MILESTONE_STATES",
@@ -30,6 +31,7 @@ __all__ = [
     "Milestone",
     "MilestoneBuildResult",
     "MilestoneGraph",
+    "MilestoneSession",
     "MilestoneSpec",
     "MilestoneState",
     "Project",
