@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from psycopg_pool import ConnectionPool
@@ -21,7 +21,6 @@ from aidevswarm.db.repositories import (
 )
 from aidevswarm.schemas import (
     AcceptanceCriterion,
-    Milestone,
     MilestoneSpec,
     MilestoneState,
     Project,
@@ -83,9 +82,7 @@ def test_project_list_by_state(live_pool: ConnectionPool, project: Project) -> N
     assert any(p.id == project.id for p in queued)
 
 
-def test_project_update_state_round_trip(
-    live_pool: ConnectionPool, project: Project
-) -> None:
+def test_project_update_state_round_trip(live_pool: ConnectionPool, project: Project) -> None:
     repo = PsycopgProjectRepo(live_pool)
     updated = repo.update_state(project.id, ProjectState.PLANNING)
     assert updated.state is ProjectState.PLANNING
@@ -110,9 +107,7 @@ def test_project_get_active_returns_in_flight_project(
     assert active.id == project.id
 
 
-def test_project_set_github_repo(
-    live_pool: ConnectionPool, project: Project
-) -> None:
+def test_project_set_github_repo(live_pool: ConnectionPool, project: Project) -> None:
     repo = PsycopgProjectRepo(live_pool)
     repo.set_github_repo(project.id, "https://github.com/x/y")
     refetched = repo.get(project.id)
@@ -135,9 +130,7 @@ def test_milestone_create_many_then_list_and_next_pending(
     live_pool: ConnectionPool, project: Project
 ) -> None:
     mrepo = PsycopgMilestoneRepo(live_pool)
-    rows = mrepo.create_many(
-        project.id, [_ms_spec("first"), _ms_spec("second"), _ms_spec("third")]
-    )
+    rows = mrepo.create_many(project.id, [_ms_spec("first"), _ms_spec("second"), _ms_spec("third")])
     assert len(rows) == 3
     assert [m.ordinal for m in rows] == [0, 1, 2]
     listed = mrepo.list_for_project(project.id)
@@ -189,9 +182,7 @@ def test_milestone_next_pending_returns_none_when_empty(
 # ------------------------- TokenLogRepo -------------------------
 
 
-def test_token_log_record_then_aggregates(
-    live_pool: ConnectionPool, project: Project
-) -> None:
+def test_token_log_record_then_aggregates(live_pool: ConnectionPool, project: Project) -> None:
     mrepo = PsycopgMilestoneRepo(live_pool)
     trepo = PsycopgTokenLogRepo(live_pool)
     [m] = mrepo.create_many(project.id, [_ms_spec("tlog")])

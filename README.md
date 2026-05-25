@@ -1,9 +1,11 @@
 # ai-dev-swarm
 
+[![verify](https://github.com/halilibrahimd27/ai-dev-swarm/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/halilibrahimd27/ai-dev-swarm/actions/workflows/verify.yml)
+
 Local autonomous multi-agent development system that designs, builds,
 tests, and ships niche software projects to GitHub on its own.
 
-> **Status:** Phase 2 (real coding loop). The full onboarding README,
+> **Status:** Phase 3 (objective quality). The full onboarding README,
 > ADRs, threat model, and security policy land in Phase 6. This file
 > is a placeholder.
 
@@ -40,6 +42,20 @@ those, override before running:
 ```bash
 POSTGRES_HOST_PORT=5433 REDIS_HOST_PORT=6380 make up
 ```
+
+### Verification gauntlet (Phase 3)
+
+```bash
+make verify          # L0..L6 + L8: lint, types, security, deps, tests
+                     # + coverage (>=85%), property tests, complexity caps,
+                     # architectural layers
+make verify-l5       # opt-in: mutmut mutation testing (slow, 20-40 min)
+```
+
+Each level has its own target (`make verify-l0`, `verify-l1`, ...) so
+you can run them in isolation. Thresholds are codified in repo:
+`ci/audit_allowlist.txt` (CVEs), `ci/importlinter.ini` (architectural
+layers), `ci/mutmut_thresholds.yml` (per-module mutation-score floors).
 
 ### Manual SDK smoke (Phase 2)
 

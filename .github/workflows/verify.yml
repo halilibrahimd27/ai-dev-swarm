@@ -1,0 +1,79 @@
+# Phase 3 — verification gauntlet.
+#
+# Runs `make verify` (L0..L6, L8) on every pull request and on every
+# push to main. L5 (mutmut) is opt-in via `make verify-l5` locally; it
+# is too slow for per-PR CI.
+
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  gauntlet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: aidevswarm
+          POSTGRES_PASSWORD: change-me
+          POSTGRES_DB: aidevswarm
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aidevswarm -d aidevswarm"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 3s
+          --health-retries 5
+
+    env:
+      AIDEVSWARM_PG_HOST: localhost
+      AIDEVSWARM_PG_PORT: "5432"
+      AIDEVSWARM_REDIS_HOST: localhost
+      AIDEVSWARM_REDIS_PORT: "6379"
+      POSTGRES_USER: aidevswarm
+      POSTGRES_PASSWORD: change-me
+      POSTGRES_DB: aidevswarm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pipx install uv
+
+      - name: Apply pgvector / pgcrypto + Phase 0..2 init schema
+        run: |
+          PGPASSWORD=change-me psql -h localhost -U aidevswarm -d aidevswarm \
+            -f docker/init.sql
+
+      - name: Install Python dependencies
+        run: uv sync --extra dev
+
+      - name: Apply Alembic migrations
+        run: uv run alembic upgrade head
+
+      - name: Run gauntlet (L0..L6, L8)
+        run: make verify
