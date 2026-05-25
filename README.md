@@ -5,9 +5,9 @@
 Local autonomous multi-agent development system that designs, builds,
 tests, and ships niche software projects to GitHub on its own.
 
-> **Status:** Phase 4 (long-horizon robustness). The full onboarding
-> README, ADRs, threat model, and security policy land in Phase 6.
-> This file is a placeholder.
+> **Status:** Phase 5 (control plane). The full onboarding README,
+> ADRs, threat model, and security policy land in Phase 6. This
+> file is a placeholder.
 
 ## Quick start (developer-facing)
 
@@ -97,6 +97,40 @@ The scheduler is now an asyncio ``ProjectPool`` with
 also has its own kill switch
 (``aidevswarm:kill:<project_id>`` in Redis) alongside the global
 ``aidevswarm:kill_switch``.
+
+### Control plane (Phase 5)
+
+ai-dev-swarm now ships a loopback-only FastAPI server (port 8080
+by default, validated to ``127.0.0.1``/``localhost`` at startup)
+plus a static three-pane web UI and a polling-mode Telegram bot.
+All three feed into the same typed ``Command`` discriminated union:
+
+  * **Web panel** (``ui/index.html``) — vanilla HTML/JS/CSS, no
+    build step, strict CSP. Three panes: project state, live
+    inter-agent transcript, controls. The transcript pane always
+    shows a "steer" text box that fires a fire-and-forget
+    ``inject_note`` command — the next agent step picks it up via
+    the Phase 1 ``{{ steering_notes }}`` slot OR (for live SDK
+    sessions) via a ``PreToolUse`` hook that runs before each tool
+    call.
+  * **SSE endpoints** — ``/sse/projects``, ``/sse/transcript/{id}``
+    (per-project), ``/sse/metrics``. Backed by a CrewAI EventBus
+    listener that fans events into per-topic asyncio queues. Every
+    outbound message passes through ``SecretRedactor`` so secrets
+    in agent transcripts never reach the wire.
+  * **Telegram bot** — polling mode (no webhook, no port), strict
+    allow-list (``AIDEVSWARM_TELEGRAM_ALLOWED_USER_IDS``). Free-form
+    text is routed through a Claude Haiku intent parser into a
+    typed ``Command``. Destructive intents (abort, kill, rescope,
+    transform, drop_and_start_new, switch_to_idea, reject_idea)
+    are echoed back with a ``[Yes][No]`` inline keyboard before
+    they reach the dispatcher.
+
+Both surfaces funnel through ``CommandRouter.dispatch`` — the
+single source of truth for what each command means. Adding a new
+operator action means adding ONE variant to ``schemas/command.py``
+and ONE handler to ``CommandRouter``; both surfaces gain it for
+free.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design.
 
