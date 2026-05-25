@@ -39,3 +39,4 @@ workspaces/
 .ruff_cache/
 .mypy_cache/
 phoenix_data/
+.coverage
