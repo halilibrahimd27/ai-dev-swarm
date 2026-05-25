@@ -1,16 +1,16 @@
-"""Advance the one active project by exactly one state-machine step.
+"""Advance one project by exactly one state-machine step.
 
-The orchestrator's main loop calls :meth:`Tick.advance_one_step` every
-``settings.tick_seconds`` seconds. Resume across restarts is automatic
-because every transition is persisted to Postgres before the function
-returns.
+Phase 4 reshape: the primitive is ``Tick.advance_project(project)`` —
+the scheduler decides WHICH project to advance. ``advance_one_step``
+stays for Phase 0/1 single-project semantics + the smoke test.
 
-This module orchestrates work but does NOT generate code. It delegates:
-
+Per-tick responsibilities:
   * ideas        -> :class:`IdeationCrew`
   * milestone graph -> :class:`PlanningCrew`
   * milestone build -> :class:`BuildCrew` (+ Sandbox CI gate)
+  * replanner    -> :class:`ReplanningCrew` + :class:`AutoSplitPredictor`
   * persistence  -> :class:`ProjectRepo` / :class:`MilestoneRepo`
+                    / :class:`MilestoneSessionRepo`
   * notifications -> :class:`Telegram`
   * publish      -> :class:`GitHubTool`
 """
@@ -20,16 +20,29 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from aidevswarm.crews.protocols import BuildCrew, IdeationCrew, PlanningCrew
+from aidevswarm.crews.replanning.protocols import ReplanningCrew
 from aidevswarm.db.protocols import MilestoneRepo, ProjectRepo
+from aidevswarm.db.sessions import MilestoneSessionRepo
 from aidevswarm.logging_config import get_logger
+from aidevswarm.orchestrator.auto_split import AutoSplitPredictor
+from aidevswarm.orchestrator.consolidation import (
+    build_consolidation_spec,
+    should_insert_consolidation,
+)
 from aidevswarm.orchestrator.state_machine import (
     assert_legal_milestone,
     assert_legal_project,
 )
 from aidevswarm.schemas import (
+    Amend,
+    Escalate,
+    Milestone,
     MilestoneState,
+    Noop,
     Project,
     ProjectState,
+    ReplannerAction,
+    Split,
 )
 from aidevswarm.settings import Settings
 from aidevswarm.tools.protocols import (
@@ -48,9 +61,12 @@ class TickDeps:
     settings: Settings
     project_repo: ProjectRepo
     milestone_repo: MilestoneRepo
+    session_repo: MilestoneSessionRepo
     ideation_crew: IdeationCrew
     planning_crew: PlanningCrew
     build_crew: BuildCrew
+    replanning_crew: ReplanningCrew
+    auto_split: AutoSplitPredictor
     workspace_manager: WorkspaceManager
     sandbox: Sandbox
     telegram: Telegram
@@ -70,20 +86,33 @@ class Tick:
     # ------------------------------------------------------------------
 
     def advance_one_step(self) -> Project | None:
-        """Advance the one active project. Return it if anything happened."""
+        """Single-project tick (Phase 0/1 entry; smoke tests use this)."""
         if self._d.kill_switch.is_tripped():
             self._log.info("tick.kill_switch_tripped")
             return None
 
         active = self._d.project_repo.get_active()
         if active is not None:
-            return self._advance_active(active)
+            return self.advance_project(active)
 
-        # No project building -> pick the next queued one if any.
+        # No project active -> pick the next queued one if any.
         queued = self._d.project_repo.list_by_state(ProjectState.QUEUED)
         if not queued:
             return None
         return self._move(queued[0], ProjectState.PLANNING)
+
+    def advance_project(self, project: Project) -> Project | None:
+        """Advance ``project`` by exactly one state-machine step.
+
+        Phase 4 primitive. The scheduler pool calls this per worker.
+        Per-project kill switch checked first.
+        """
+        if self._d.kill_switch.is_tripped():
+            return None
+        if self._d.kill_switch.is_tripped_for(project.id):
+            self._log.info("tick.project_killed", project=project.name)
+            return self._move(project, ProjectState.KILLED)
+        return self._advance_active(project)
 
     # ------------------------------------------------------------------
     # Per-state handlers
@@ -91,12 +120,16 @@ class Tick:
 
     def _advance_active(self, project: Project) -> Project | None:
         match project.state:
+            case ProjectState.QUEUED:
+                return self._move(project, ProjectState.PLANNING)
             case ProjectState.PLANNING:
                 return self._plan(project)
             case ProjectState.AWAITING_APPROVAL:
                 return None  # waits for an external approval event
             case ProjectState.BUILDING:
                 return self._build_one_milestone(project)
+            case ProjectState.REPLANNING:
+                return self._replan(project)
             case ProjectState.INTEGRATION:
                 return self._integrate(project)
             case _:
@@ -146,7 +179,8 @@ class Tick:
                     f"milestone '{milestone.title}'."
                 )
                 return self._move(project, ProjectState.BLOCKED)
-            return project  # retry on next tick
+            # Retry -> Phase 4 routes through the replanner.
+            return self._move(project, ProjectState.REPLANNING)
 
         # Success: commit and record.
         if workspace.is_dirty():
@@ -157,10 +191,60 @@ class Tick:
         else:
             commit_hash = result.commit_hash
         self._d.milestone_repo.record_attempt(milestone.id, success=True, commit_hash=commit_hash)
-        return project  # stay in BUILDING; next tick picks the next milestone
+        # Phase 4: route to replanner so it can decide what (if anything)
+        # to change about the upcoming milestone, and check the
+        # consolidation cadence.
+        return self._move(project, ProjectState.REPLANNING)
+
+    def _replan(self, project: Project) -> Project | None:
+        """Phase 4 replanning state.
+
+        Inserts consolidation milestones at the right cadence, then
+        runs the cheap AutoSplit heuristic, then (only if the
+        heuristic didn't fire) the LLM-driven Replanner crew.
+        """
+        milestones = self._d.milestone_repo.list_for_project(project.id)
+
+        # 1) Consolidation cadence.
+        if should_insert_consolidation(
+            milestones, every=self._d.settings.consolidation_every
+        ):
+            last_done = _last_done(milestones)
+            if last_done is not None:
+                self._d.milestone_repo.insert_after(
+                    last_done.id, build_consolidation_spec()
+                )
+                self._log.info(
+                    "tick.consolidation_inserted",
+                    project=project.name,
+                    after=last_done.title,
+                )
+
+        # 2) Pick the next pending milestone (might be the consolidation
+        #    we just inserted, or a regular one).
+        next_milestone = self._d.milestone_repo.next_pending(project.id)
+        if next_milestone is None:
+            return self._move(project, ProjectState.INTEGRATION)
+
+        # 3) Auto-split (cheap): if predicted over budget, mechanically
+        #    bisect the milestone WITHOUT calling the LLM.
+        cheap_split = self._d.auto_split.predict(next_milestone)
+        if cheap_split is not None:
+            return self._apply_action(project, cheap_split)
+
+        # 4) Replanner crew (LLM): always Noop-on-error so we never
+        #    take the project down because of a tracing or quota blip.
+        recent_sessions = _recent_sessions(
+            self._d.session_repo, milestones, limit=6
+        )
+        action = self._d.replanning_crew.run(
+            project=project,
+            next_milestone=next_milestone,
+            recent_sessions=recent_sessions,
+        )
+        return self._apply_action(project, action)
 
     def _integrate(self, project: Project) -> Project:
-        # Phase 0 integration is intentionally minimal: open the PR.
         if project.github_repo:
             try:
                 pr_url = self._d.github.open_pr(
@@ -173,6 +257,41 @@ class Tick:
             except Exception as exc:
                 self._log.warning("tick.publish_failed", error=str(exc))
         return self._move(project, ProjectState.DONE)
+
+    # ------------------------------------------------------------------
+    # Replanner action application
+    # ------------------------------------------------------------------
+
+    def _apply_action(self, project: Project, action: ReplannerAction) -> Project:
+        match action:
+            case Noop():
+                self._log.info("replanner.noop", project=project.name)
+                return self._move(project, ProjectState.BUILDING)
+            case Amend():
+                self._d.milestone_repo.update_spec(action.milestone_id, action.patch)
+                self._log.info(
+                    "replanner.amend",
+                    project=project.name,
+                    milestone=str(action.milestone_id),
+                )
+                return self._move(project, ProjectState.BUILDING)
+            case Split():
+                self._d.milestone_repo.replace_with(action.milestone_id, action.into)
+                self._log.info(
+                    "replanner.split",
+                    project=project.name,
+                    milestone=str(action.milestone_id),
+                    children=len(action.into),
+                )
+                return self._move(project, ProjectState.BUILDING)
+            case Escalate():
+                self._d.telegram.send(
+                    f"[ai-dev-swarm] project '{project.name}' escalated: {action.reason}"
+                )
+                self._log.info(
+                    "replanner.escalate", project=project.name, reason=action.reason
+                )
+                return self._move(project, ProjectState.BLOCKED)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -190,10 +309,32 @@ class Tick:
         return updated
 
 
+def _last_done(milestones: list[Milestone]) -> Milestone | None:
+    done = [m for m in milestones if m.state is MilestoneState.DONE]
+    if not done:
+        return None
+    return max(done, key=lambda m: m.ordinal)
+
+
+def _recent_sessions(
+    session_repo: MilestoneSessionRepo,
+    milestones: list[Milestone],
+    *,
+    limit: int = 6,
+) -> list:  # type: ignore[type-arg]
+    """Latest per-role sessions across the most-recent ``limit`` milestones."""
+    recent = sorted(milestones, key=lambda m: m.ordinal, reverse=True)[:limit]
+    out = []
+    for m in recent:
+        for role in ("Developer", "Tester"):
+            s = session_repo.latest_for(m.id, role)
+            if s is not None:
+                out.append(s)
+    return out
+
+
 def _slug(text: str) -> str:
     return "".join(c.lower() if c.isalnum() else "-" for c in text).strip("-")[:32] or "milestone"
 
 
-# Re-export so callers can move milestones without importing the module
-# tree below.
 __all__ = ["Tick", "TickDeps", "assert_legal_milestone"]

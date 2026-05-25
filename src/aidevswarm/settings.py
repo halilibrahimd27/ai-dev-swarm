@@ -90,9 +90,7 @@ class Settings(BaseSettings):
     )
     # Consolidation cadence (Phase 4). Every Nth completed milestone is
     # followed by a no-features-allowed "tidy + verify" milestone.
-    consolidation_every: int = Field(
-        default=5, validation_alias="AIDEVSWARM_CONSOLIDATION_EVERY"
-    )
+    consolidation_every: int = Field(default=5, validation_alias="AIDEVSWARM_CONSOLIDATION_EVERY")
 
     # --- Workspace --------------------------------------------------------
     workspaces_dir: Path = Field(

@@ -13,6 +13,7 @@ import asyncio
 
 from aidevswarm.crews import CrewaiBuildCrew, CrewaiIdeationCrew, CrewaiPlanningCrew
 from aidevswarm.crews.ideation.novelty import NoveltyChecker
+from aidevswarm.crews.replanning import CrewaiReplanningCrew
 from aidevswarm.db.pool import close_pool, open_pool
 from aidevswarm.db.repositories import (
     PsycopgMilestoneRepo,
@@ -22,6 +23,7 @@ from aidevswarm.db.repositories import (
 from aidevswarm.db.sessions import PsycopgMilestoneSessionRepo
 from aidevswarm.logging_config import configure_logging, get_logger
 from aidevswarm.observability import bootstrap_phoenix
+from aidevswarm.orchestrator.auto_split import AutoSplitPredictor
 from aidevswarm.orchestrator.scheduler import IntervalJob, Scheduler
 from aidevswarm.orchestrator.tick import Tick, TickDeps
 from aidevswarm.settings import Settings, load_settings
@@ -57,6 +59,7 @@ def _build_tick(settings: Settings) -> Tick:
         settings=settings,
         project_repo=project_repo,
         milestone_repo=milestone_repo,
+        session_repo=session_repo,
         ideation_crew=CrewaiIdeationCrew(
             settings,
             novelty_checker=NoveltyChecker(
@@ -65,6 +68,8 @@ def _build_tick(settings: Settings) -> Tick:
         ),
         planning_crew=CrewaiPlanningCrew(settings),
         build_crew=CrewaiBuildCrew(settings, session_repo, mcp_servers=load_mcp_servers()),
+        replanning_crew=CrewaiReplanningCrew(settings),
+        auto_split=AutoSplitPredictor(settings, session_repo),
         workspace_manager=WorkspaceManager(settings.workspaces_dir),
         sandbox=DockerSandbox(),
         telegram=TelegramNotifier(settings),

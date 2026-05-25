@@ -94,7 +94,7 @@ class PsycopgProjectRepo:
                 """
                 SELECT * FROM projects
                 WHERE state IN ('planning', 'awaiting_approval', 'building',
-                                'integration')
+                                'replanning', 'integration')
                 ORDER BY updated_at ASC
                 LIMIT 1
                 """
@@ -226,6 +226,127 @@ class PsycopgMilestoneRepo:
             if row is None:
                 raise LookupError(f"milestone {milestone_id} not found")
             return _milestone_from_row(row)
+
+    def update_spec(self, milestone_id: UUID, patch: dict[str, Any]) -> Milestone:
+        """Apply ``patch`` to the milestone's spec (Phase 4 Amend).
+
+        Unknown keys are rejected by ``MilestoneSpec.model_copy(update=)``
+        because the schema has ``extra='forbid'``.
+        """
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                "SELECT * FROM milestones WHERE id = %s", (str(milestone_id),)
+            )
+            current = cur.fetchone()
+            if current is None:
+                raise LookupError(f"milestone {milestone_id} not found")
+            existing_spec = MilestoneSpec.model_validate(current["spec"])
+            new_spec = existing_spec.model_copy(update=patch)
+            cur.execute(
+                """
+                UPDATE milestones SET spec = %s, updated_at = %s
+                WHERE id = %s RETURNING *
+                """,
+                (Json(new_spec.model_dump()), utc_now(), str(milestone_id)),
+            )
+            row = cur.fetchone()
+            assert row is not None
+            return _milestone_from_row(row)
+
+    def replace_with(
+        self, milestone_id: UUID, into: list[MilestoneSpec]
+    ) -> list[Milestone]:
+        """Replace one milestone with N children (Phase 4 Split).
+
+        Children inherit the project_id + the deleted milestone's
+        ordinal as their starting position; later milestones shift
+        down by ``len(into) - 1``.
+        """
+        if len(into) < 2:
+            raise ValueError("replace_with requires at least 2 child specs")
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                "SELECT project_id, ordinal FROM milestones WHERE id = %s",
+                (str(milestone_id),),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise LookupError(f"milestone {milestone_id} not found")
+            project_id = row["project_id"]
+            start_ordinal = int(row["ordinal"])
+            shift = len(into) - 1
+
+            # Bump the ordinals of everything after the parent. UPDATE in
+            # descending order to avoid uniqueness collisions on
+            # (project_id, ordinal).
+            cur.execute(
+                """
+                UPDATE milestones SET ordinal = ordinal + %s, updated_at = %s
+                WHERE project_id = %s AND ordinal > %s
+                """,
+                (shift, utc_now(), str(project_id), start_ordinal),
+            )
+            # Delete the parent then insert the children at consecutive
+            # ordinals starting at `start_ordinal`.
+            cur.execute("DELETE FROM milestones WHERE id = %s", (str(milestone_id),))
+            inserted: list[dict[str, Any]] = []
+            for i, spec in enumerate(into):
+                cur.execute(
+                    """
+                    INSERT INTO milestones (project_id, ordinal, title, spec, state)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING *
+                    """,
+                    (
+                        str(project_id),
+                        start_ordinal + i,
+                        spec.title,
+                        Json(spec.model_dump()),
+                        MilestoneState.PENDING.value,
+                    ),
+                )
+                child = cur.fetchone()
+                assert child is not None
+                inserted.append(child)
+        return [_milestone_from_row(r) for r in inserted]
+
+    def insert_after(self, milestone_id: UUID, spec: MilestoneSpec) -> Milestone:
+        """Insert a milestone immediately after ``milestone_id``."""
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                "SELECT project_id, ordinal FROM milestones WHERE id = %s",
+                (str(milestone_id),),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise LookupError(f"milestone {milestone_id} not found")
+            project_id = row["project_id"]
+            after_ordinal = int(row["ordinal"])
+
+            cur.execute(
+                """
+                UPDATE milestones SET ordinal = ordinal + 1, updated_at = %s
+                WHERE project_id = %s AND ordinal > %s
+                """,
+                (utc_now(), str(project_id), after_ordinal),
+            )
+            cur.execute(
+                """
+                INSERT INTO milestones (project_id, ordinal, title, spec, state)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                (
+                    str(project_id),
+                    after_ordinal + 1,
+                    spec.title,
+                    Json(spec.model_dump()),
+                    MilestoneState.PENDING.value,
+                ),
+            )
+            inserted = cur.fetchone()
+            assert inserted is not None
+        return _milestone_from_row(inserted)
 
 
 class PsycopgTokenLogRepo:

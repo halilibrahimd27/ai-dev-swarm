@@ -7,7 +7,7 @@ in-memory fakes (no Postgres required).
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from aidevswarm.schemas import (
@@ -44,6 +44,19 @@ class MilestoneRepo(Protocol):
         success: bool,
         commit_hash: str | None,
     ) -> Milestone: ...
+    def update_spec(self, milestone_id: UUID, patch: dict[str, Any]) -> Milestone:
+        """Apply a partial patch to the milestone's spec (Phase 4 Amend)."""
+
+    def replace_with(self, milestone_id: UUID, into: list[MilestoneSpec]) -> list[Milestone]:
+        """Replace one milestone with N children (Phase 4 Split)."""
+
+    def insert_after(
+        self, milestone_id: UUID, spec: MilestoneSpec
+    ) -> Milestone:
+        """Insert a new milestone immediately after ``milestone_id``.
+
+        Subsequent milestones have their ordinals bumped by one so the
+        scheduler reaches the inserted milestone next."""
 
 
 class TokenLogRepo(Protocol):

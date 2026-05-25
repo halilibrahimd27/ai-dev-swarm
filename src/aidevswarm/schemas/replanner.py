@@ -13,7 +13,7 @@ give us:
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -69,6 +69,4 @@ class Escalate(BaseModel):
     freeze: bool = True
 
 
-ReplannerAction = Annotated[
-    Union[Noop, Amend, Split, Escalate], Field(discriminator="action")
-]
+ReplannerAction = Annotated[Noop | Amend | Split | Escalate, Field(discriminator="action")]

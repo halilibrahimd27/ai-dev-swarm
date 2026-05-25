@@ -52,6 +52,7 @@ class InMemoryProjectRepo:
             ProjectState.PLANNING,
             ProjectState.AWAITING_APPROVAL,
             ProjectState.BUILDING,
+            ProjectState.REPLANNING,
             ProjectState.INTEGRATION,
         }
         for project in self.rows.values():
@@ -137,6 +138,53 @@ class InMemoryMilestoneRepo:
         )
         self.rows[milestone_id] = updated
         return updated
+
+    def update_spec(self, milestone_id: UUID, patch: dict[str, Any]) -> Milestone:
+        existing = self.rows[milestone_id]
+        new_spec = existing.spec.model_copy(update=patch)
+        updated = existing.model_copy(update={"spec": new_spec, "updated_at": utc_now()})
+        self.rows[milestone_id] = updated
+        return updated
+
+    def replace_with(
+        self, milestone_id: UUID, into: list[MilestoneSpec]
+    ) -> list[Milestone]:
+        if len(into) < 2:
+            raise ValueError("replace_with requires at least 2 child specs")
+        parent = self.rows.pop(milestone_id)
+        shift = len(into) - 1
+        # Bump later ordinals.
+        for m in list(self.rows.values()):
+            if m.project_id == parent.project_id and m.ordinal > parent.ordinal:
+                self.rows[m.id] = m.model_copy(update={"ordinal": m.ordinal + shift})
+        # Insert children at consecutive ordinals.
+        children: list[Milestone] = []
+        for i, spec in enumerate(into):
+            child = Milestone(
+                id=uuid4(),
+                project_id=parent.project_id,
+                ordinal=parent.ordinal + i,
+                title=spec.title,
+                spec=spec,
+            )
+            self.rows[child.id] = child
+            children.append(child)
+        return children
+
+    def insert_after(self, milestone_id: UUID, spec: MilestoneSpec) -> Milestone:
+        parent = self.rows[milestone_id]
+        for m in list(self.rows.values()):
+            if m.project_id == parent.project_id and m.ordinal > parent.ordinal:
+                self.rows[m.id] = m.model_copy(update={"ordinal": m.ordinal + 1})
+        child = Milestone(
+            id=uuid4(),
+            project_id=parent.project_id,
+            ordinal=parent.ordinal + 1,
+            title=spec.title,
+            spec=spec,
+        )
+        self.rows[child.id] = child
+        return child
 
 
 @dataclass

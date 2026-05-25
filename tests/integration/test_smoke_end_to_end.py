@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from aidevswarm.orchestrator.auto_split import AutoSplitPredictor
 from aidevswarm.orchestrator.tick import Tick, TickDeps
 from aidevswarm.schemas import (
     AcceptanceCriterion,
@@ -40,7 +41,9 @@ from tests.fakes import (
     FakeBuildCrew,
     FakeGitHub,
     FakeIdeationCrew,
+    FakeMilestoneSessionRepo,
     FakePlanningCrew,
+    FakeReplanningCrew,
     FakeSandbox,
     InMemoryMilestoneRepo,
     InMemoryProjectRepo,
@@ -113,9 +116,12 @@ def _build_tick(tmp_path: Path, *, require_approval: bool = False) -> tuple[Tick
     )
     project_repo = InMemoryProjectRepo()
     milestone_repo = InMemoryMilestoneRepo()
+    session_repo = FakeMilestoneSessionRepo()
     ideation = FakeIdeationCrew(ideas=[_scored_idea()])
     planning = FakePlanningCrew(graph=_milestone_graph())
     build = FakeBuildCrew(succeed=True)
+    replanner = FakeReplanningCrew()  # default Noop
+    auto_split = AutoSplitPredictor(settings, session_repo)
     workspace_manager = WorkspaceManager(tmp_path / "workspaces")
     sandbox = FakeSandbox(pass_through=True)
     telegram = RecordingTelegram()
@@ -126,9 +132,12 @@ def _build_tick(tmp_path: Path, *, require_approval: bool = False) -> tuple[Tick
         settings=settings,
         project_repo=project_repo,
         milestone_repo=milestone_repo,
+        session_repo=session_repo,
         ideation_crew=ideation,
         planning_crew=planning,
         build_crew=build,
+        replanning_crew=replanner,
+        auto_split=auto_split,
         workspace_manager=workspace_manager,
         sandbox=sandbox,
         telegram=telegram,
