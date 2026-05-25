@@ -107,6 +107,66 @@ def test_steering_notes_are_role_consumed(tmp_path: Path) -> None:
     assert "watch the bounds" not in str(test_opts.system_prompt)
 
 
+def test_no_steering_repo_means_no_pretooluse_hook(tmp_path: Path) -> None:
+    """Phase 5 invariant: callers without a SteeringRepo pay zero hook cost."""
+    repo = FakeMilestoneSessionRepo()
+    tool = ClaudeAgentSDKDeveloperTool(Settings(), repo)  # no steering_repo
+    ms = _milestone()
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+    opts = tool.build_options(ms, ws, max_turns=10, max_budget_usd=1.0, resume=None)
+    assert opts.hooks is None or opts.hooks == {}
+
+
+def test_with_steering_repo_installs_pretooluse_hook(tmp_path: Path) -> None:
+    """When a SteeringRepo is wired, build_options installs the PreToolUse hook."""
+    repo = FakeMilestoneSessionRepo()
+    steering = FakeSteeringRepo()
+    tool = ClaudeAgentSDKDeveloperTool(Settings(), repo, steering_repo=steering)
+    ms = _milestone()
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+    opts = tool.build_options(ms, ws, max_turns=10, max_budget_usd=1.0, resume=None)
+    assert opts.hooks is not None
+    pretool = opts.hooks.get("PreToolUse")
+    assert pretool is not None
+    assert len(pretool) == 1
+    assert len(pretool[0].hooks) == 1
+
+
+@pytest.mark.asyncio
+async def test_pretooluse_hook_injects_pending_steering_notes(tmp_path: Path) -> None:
+    """Mid-flight steering: the hook surfaces newly-queued notes."""
+    repo = FakeMilestoneSessionRepo()
+    steering = FakeSteeringRepo()
+    tool = ClaudeAgentSDKDeveloperTool(Settings(), repo, steering_repo=steering)
+    ms = _milestone()
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+
+    opts = tool.build_options(ms, ws, max_turns=10, max_budget_usd=1.0, resume=None)
+    assert opts.hooks is not None
+    callback = opts.hooks["PreToolUse"][0].hooks[0]
+
+    # No notes yet -> empty output.
+    out_empty = await callback({}, None, None)
+    assert out_empty == {}
+
+    # Drop a note (the operator types it in the web UI mid-flight)
+    # and assert the next PreToolUse call surfaces it as a
+    # systemMessage. NOTE: build_options() pulled the steering pipe
+    # once at session start; the hook handles the case AFTER that.
+    steering.add_note(ms.project_id, "watch for off-by-one")
+
+    out = await callback({}, None, None)
+    assert "watch for off-by-one" in out.get("systemMessage", "")
+
+    # A second call consumes nothing (the note was atomically marked
+    # consumed on the first call).
+    out_after = await callback({}, None, None)
+    assert out_after == {}
+
+
 def test_task_prompt_includes_milestone_title_and_spec() -> None:
     repo = FakeMilestoneSessionRepo()
     tool = ClaudeAgentSDKDeveloperTool(Settings(), repo)

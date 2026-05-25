@@ -23,10 +23,15 @@ import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 from uuid import UUID
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage
+from claude_agent_sdk import (
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    HookMatcher,
+    ResultMessage,
+)
 from claude_agent_sdk.types import McpStdioServerConfig
 
 from aidevswarm.db.sessions import MilestoneSessionRepo
@@ -135,7 +140,49 @@ class ClaudeAgentSDKTool:
             resume=resume,
             model=self._settings.model_strong,
             mcp_servers=dict(self._mcp_servers),
+            hooks=self._build_hooks(milestone.project_id),
         )
+
+    def _build_hooks(
+        self,
+        project_id: UUID,
+    ) -> dict[Any, list[HookMatcher]] | None:
+        """Install a PreToolUse hook that injects pending steering notes.
+
+        Phase 5 Mandate 3: the operator can drop a note in the web UI
+        while the SDK is running. The note goes to ``steering_notes``;
+        on the SDK's NEXT tool call this hook pulls any unconsumed
+        notes and surfaces them as a ``systemMessage`` — the agent
+        reads them on the very next turn without restarting.
+
+        Returns ``None`` if no steering repo is wired (Phase 0-4
+        callers don't pay any overhead).
+        """
+        steering = self._steering
+        if steering is None:
+            return None
+        role = self.role
+
+        async def _inject(
+            _input: Any,
+            _tool_use_id: str | None,
+            _context: Any,
+        ) -> dict[str, Any]:
+            notes = await asyncio.to_thread(steering.pull_unconsumed, project_id, role)
+            if not notes:
+                return {}
+            joined = "\n".join(f"- {n}" for n in notes)
+            return {
+                "systemMessage": (
+                    "## Mid-flight steering from the operator\n"
+                    f"{joined}\n"
+                    "Apply these on your next step."
+                )
+            }
+
+        # PreToolUse fires before EACH tool call — the matcher with
+        # no pattern means "all tools". (claude-agent-sdk 0.2.87)
+        return {"PreToolUse": [HookMatcher(hooks=[_inject])]}  # type: ignore[list-item]
 
     def task_prompt(self, milestone: Milestone) -> str:
         """The user-facing prompt the SDK receives as the first turn."""
