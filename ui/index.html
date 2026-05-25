@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ai-dev-swarm — control plane</title>
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none';" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>ai-dev-swarm</h1>
+    <span id="ws-status" class="status">connecting…</span>
+  </header>
+
+  <main class="grid">
+    <!-- (a) State pane -->
+    <section id="state-pane" aria-label="Projects + milestones">
+      <h2>state</h2>
+      <ul id="project-list" class="project-list"></ul>
+    </section>
+
+    <!-- (b) Live transcript pane -->
+    <section id="transcript-pane" aria-label="Live inter-agent transcript">
+      <h2>transcript <small id="current-project">(no project selected)</small></h2>
+      <ol id="transcript" class="transcript"></ol>
+      <form id="steer-form" class="steer">
+        <input id="steer-input" type="text" placeholder="drop a steering note (fire-and-forget)…" autocomplete="off" />
+        <button type="submit">send</button>
+      </form>
+    </section>
+
+    <!-- (c) Controls pane -->
+    <section id="controls-pane" aria-label="Operator controls">
+      <h2>controls</h2>
+      <fieldset>
+        <legend>this project</legend>
+        <button data-intent="approve">approve</button>
+        <button data-intent="pause_project">pause</button>
+        <button data-intent="resume_project">resume</button>
+        <button data-intent="abort_project" class="danger">abort</button>
+      </fieldset>
+      <fieldset>
+        <legend>scope</legend>
+        <input id="rescope-input" type="text" placeholder="new scope…" />
+        <button data-intent="rescope" class="danger">rescope</button>
+      </fieldset>
+      <fieldset>
+        <legend>global</legend>
+        <button data-intent="kill_switch" class="danger">kill switch</button>
+      </fieldset>
+      <pre id="result-log" class="result-log" aria-live="polite"></pre>
+    </section>
+  </main>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>
