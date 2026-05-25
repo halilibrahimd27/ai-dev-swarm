@@ -1,0 +1,19 @@
+# Bandit configuration for the Phase 3 L1 gauntlet level.
+#
+# We only fail the build on HIGH-severity findings (`bandit -ll`); LOW
+# and MEDIUM are surfaced as noise the operator can scan but do not
+# block CI.
+
+# Tests skipped explicitly here are documented per-rule below.
+skips:
+  # B701 — jinja2 autoescape=False. We render LLM system prompts, NOT
+  # HTML. HTML-escaping prompt content would corrupt the prompts the
+  # SDK sees. The renderer lives in src/aidevswarm/steering/renderer.py
+  # and has StrictUndefined to fail loudly on typos, which is the actual
+  # safety guarantee we need.
+  - B701
+
+exclude_dirs:
+  - tests
+  - alembic
+  - .venv

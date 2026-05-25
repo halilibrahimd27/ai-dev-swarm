@@ -12,7 +12,7 @@ dependencies = [
   "crewai>=0.86,<2.0",
   "claude-agent-sdk>=0.2.87",
   "anthropic>=0.40,<1.0",
-  "litellm>=1.50,<2.0",
+  "litellm>=1.83.7,<2.0",
 
   # Persistence + cache
   "psycopg[binary,pool]>=3.2,<4.0",
@@ -21,9 +21,9 @@ dependencies = [
   "alembic>=1.13,<2.0",
 
   # HTTP / control plane (FastAPI is wired in Phase 5; install now for env stability)
-  "fastapi>=0.115,<0.116",
+  "fastapi>=0.119,<1.0",
   "uvicorn[standard]>=0.32,<0.33",
-  "httpx>=0.27,<0.28",
+  "httpx>=0.28,<0.29",
 
   # Telegram (one-way send in Phase 0; rich control in Phase 5)
   "python-telegram-bot>=21.6,<22.0",
@@ -41,8 +41,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.0,<9.0",
-  "pytest-asyncio>=0.24,<0.25",
+  "pytest>=8.3.4,<10.0",
+  "pytest-asyncio>=0.25,<2.0",
   "pytest-mock>=3.14,<4.0",
   "pytest-cov>=5.0,<6.0",
   "hypothesis>=6.110,<7.0",
@@ -148,9 +148,31 @@ markers = [
   "integration: end-to-end smoke tests (slower; no external services required)",
   "slow: long-running tests",
   "anthropic: tests that call the live Anthropic API; require ANTHROPIC_API_KEY",
+  "property: Hypothesis property-based tests (Phase 3 L4)",
+  "network: tests that make outbound network calls; require AIDEVSWARM_NOVELTY_LIVE=1",
 ]
 filterwarnings = [
   "error",
   "ignore::DeprecationWarning:pydantic.*",
   "ignore::DeprecationWarning:litellm.*",
+]
+
+[tool.coverage.run]
+source = ["src/aidevswarm"]
+branch = false
+omit = [
+  # Composition root — wired by the operator, exercised via docker compose up.
+  "src/aidevswarm/orchestrator/orchestrator.py",
+  "src/aidevswarm/__main__.py",
+  # Phoenix bootstrap is best-effort and only exercised against a live container.
+  "src/aidevswarm/observability/phoenix.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+  "pragma: no cover",
+  "raise NotImplementedError",
+  "if __name__ == .__main__.:",
 ]

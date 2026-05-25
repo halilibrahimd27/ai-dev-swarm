@@ -1,0 +1,16 @@
+# Phase 3 L2 — CVE allowlist for pip-audit (one PEP-440 vuln-id per line).
+#
+# Each entry MUST be paired with a one-line rationale in a comment
+# above it explaining why we accept this CVE (upstream-only, no
+# exposure surface in our usage, etc). The reviewer who approves a
+# PR adding an entry here owns the call.
+
+# diskcache 5.6.3 — transitive via chromadb; no fix released upstream.
+# We never hand untrusted input to diskcache's pickle paths (our use is
+# limited to CrewAI's internal short-term memory).
+CVE-2025-69872
+
+# uv 0.9.30 (dev-only) — fix lands in 0.11.6; the user-facing host uv is
+# already 0.11.16 (see operator handbook). The venv-pinned 0.9.30 is
+# only used by GitHub Actions to read uv.lock; no exposure surface.
+GHSA-pjjw-68hj-v9mw

@@ -1,0 +1,34 @@
+# Phase 3 L5 — per-module mutation-score floors.
+#
+# The verify-l5 Makefile target runs mutmut and surfaces the score.
+# Phase 3 ships baseline thresholds keyed by module so subsystems
+# with different testability profiles can move independently.
+# Phase 4+ may ratchet upward as more tests land.
+#
+# Schema:
+#   <module path under src/aidevswarm/>: <minimum killed-mutant ratio, 0..1>
+#
+# A score of 0.60 means at least 60% of generated mutants are killed
+# by the test suite. The Phase 3 prompt's overall target is 0.60;
+# the cells below codify what we expect *per module* given how much
+# pure logic vs. integration-only code each carries.
+
+defaults:
+  threshold: 0.60
+
+modules:
+  aidevswarm/orchestrator/state_machine.py: 0.80
+  aidevswarm/schemas/idea.py:                0.80
+  aidevswarm/schemas/milestone.py:           0.80
+  aidevswarm/schemas/project.py:             0.80
+  aidevswarm/schemas/session.py:             0.80
+  aidevswarm/steering/renderer.py:           0.75
+  aidevswarm/tools/budget.py:                0.75
+  aidevswarm/tools/workspace.py:             0.70
+  # IO-heavy / mostly-delegating modules — lower floor.
+  aidevswarm/db/repositories.py:             0.50
+  aidevswarm/db/sessions.py:                 0.50
+  aidevswarm/tools/sandbox.py:               0.40
+  aidevswarm/tools/telegram.py:              0.40
+  aidevswarm/tools/github_tool.py:           0.40
+  aidevswarm/observability/phoenix.py:       0.30
