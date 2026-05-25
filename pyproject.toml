@@ -1,0 +1,142 @@
+[project]
+name = "aidevswarm"
+version = "0.0.1"
+description = "Local autonomous multi-agent development system."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "Apache-2.0" }
+authors = [{ name = "ai-dev-swarm" }]
+
+dependencies = [
+  # Agent runtime + LLM
+  "crewai>=0.86,<2.0",
+  "claude-agent-sdk>=0.2.87",
+  "anthropic>=0.40,<1.0",
+  "litellm>=1.50,<2.0",
+
+  # Persistence + cache
+  "psycopg[binary]>=3.2,<4.0",
+  "pgvector>=0.3,<0.4",
+  "redis>=5.0,<6.0",
+
+  # HTTP / control plane (FastAPI is wired in Phase 5; install now for env stability)
+  "fastapi>=0.115,<0.116",
+  "uvicorn[standard]>=0.32,<0.33",
+  "httpx>=0.27,<0.28",
+
+  # Telegram (one-way send in Phase 0; rich control in Phase 5)
+  "python-telegram-bot>=21.6,<22.0",
+
+  # Models + settings + logging
+  "pydantic>=2.9,<3.0",
+  "pydantic-settings>=2.5,<3.0",
+  "structlog>=24.4,<25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0,<9.0",
+  "pytest-asyncio>=0.24,<0.25",
+  "pytest-mock>=3.14,<4.0",
+  "hypothesis>=6.110,<7.0",
+  "ruff>=0.7,<0.8",
+  "mypy>=1.13,<2.0",
+  "types-redis>=4.6,<5.0",
+  "types-requests>=2.32,<3.0",
+]
+
+[project.scripts]
+aidevswarm = "aidevswarm.__main__:main"
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aidevswarm"]
+
+# ----------------------------------------------------------------------------
+# uv
+# ----------------------------------------------------------------------------
+[tool.uv]
+package = true
+dev-dependencies = []
+
+# ----------------------------------------------------------------------------
+# Ruff
+# ----------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+extend-exclude = ["workspaces", ".venv", "phoenix_data"]
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "W",    # pyflakes + pycodestyle
+  "I",              # isort
+  "B",              # bugbear
+  "UP",             # pyupgrade
+  "SIM",            # simplify
+  "RUF",            # ruff-specific
+  "N",              # pep8-naming
+  "ASYNC",          # async lint
+  "TID",            # tidy imports
+]
+ignore = [
+  "E501",   # line length is handled by formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011", "N802"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+# ----------------------------------------------------------------------------
+# mypy --strict (per CLAUDE.md)
+# ----------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+warn_unused_configs = true
+mypy_path = ["src"]
+explicit_package_bases = true
+namespace_packages = true
+disallow_any_unimported = false
+ignore_missing_imports = false
+
+[[tool.mypy.overrides]]
+# CrewAI / LiteLLM / pgvector publish partial or no type info; allow.
+module = [
+  "crewai",
+  "crewai.*",
+  "litellm",
+  "litellm.*",
+  "pgvector",
+  "pgvector.*",
+  "claude_agent_sdk",
+  "claude_agent_sdk.*",
+]
+ignore_missing_imports = true
+
+# ----------------------------------------------------------------------------
+# pytest
+# ----------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-q --strict-markers --strict-config"
+asyncio_mode = "auto"
+markers = [
+  "integration: end-to-end smoke tests (slower; no external services required)",
+  "slow: long-running tests",
+]
+filterwarnings = [
+  "error",
+  "ignore::DeprecationWarning:pydantic.*",
+  "ignore::DeprecationWarning:litellm.*",
+]

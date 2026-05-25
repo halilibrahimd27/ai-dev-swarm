@@ -1,0 +1,41 @@
+# ============================================================
+#  BUILD KIT — local-only, NEVER committed.
+#  This is *how the product was built* (prompts, brief, Claude
+#  Code config, build journals). These files stay on disk so
+#  Claude Code can use them every session, but they are NOT
+#  part of the product and must never reach GitHub.
+# ============================================================
+/CLAUDE.md
+/PROGRESS.md
+/BLOCKERS.md
+/OPERATOR_HANDBOOK.md
+/.claude/
+/.mcp.json
+/.devcontainer/
+/docs/PROJECT_BRIEF.md
+/docs/ARCHITECTURE.md
+/docs/phase-prompts/
+/docs/plans/
+/docs/handoffs/
+
+# Note: everything else IS the product and WILL be committed —
+# src/, tests/, ci/, ui/, docker/, Makefile, pyproject.toml,
+# .env.example, docs/adr/, and the README/THREAT_MODEL/SECURITY
+# that Claude Code writes in Phase 6.
+
+# ============================================================
+#  Standard Python / project ignores
+# ============================================================
+.env
+.env.local
+secrets/
+__pycache__/
+*.pyc
+.venv/
+.uv/
+workspaces/
+.mutmut-cache
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+phoenix_data/

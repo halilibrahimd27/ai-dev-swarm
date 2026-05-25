@@ -1,0 +1,21 @@
+services:
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: aidevswarm-phoenix
+    ports:
+      - "6006:6006"   # UI + OTLP HTTP (/v1/traces)
+      - "4317:4317"   # OTLP gRPC
+    environment:
+      - PHOENIX_WORKING_DIR=/mnt/data
+    volumes:
+      - phoenix_data:/mnt/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:6006/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+volumes:
+  phoenix_data:
+    driver: local
