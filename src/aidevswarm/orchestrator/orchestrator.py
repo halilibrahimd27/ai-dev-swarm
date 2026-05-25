@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 
 from aidevswarm.crews import CrewaiBuildCrew, CrewaiIdeationCrew, CrewaiPlanningCrew
+from aidevswarm.crews.ideation.novelty import NoveltyChecker
 from aidevswarm.db.pool import close_pool, open_pool
 from aidevswarm.db.repositories import (
     PsycopgMilestoneRepo,
@@ -56,7 +57,12 @@ def _build_tick(settings: Settings) -> Tick:
         settings=settings,
         project_repo=project_repo,
         milestone_repo=milestone_repo,
-        ideation_crew=CrewaiIdeationCrew(settings),
+        ideation_crew=CrewaiIdeationCrew(
+            settings,
+            novelty_checker=NoveltyChecker(
+                github_token=settings.github_token.get_secret_value() or None
+            ),
+        ),
         planning_crew=CrewaiPlanningCrew(settings),
         build_crew=CrewaiBuildCrew(settings, session_repo, mcp_servers=load_mcp_servers()),
         workspace_manager=WorkspaceManager(settings.workspaces_dir),

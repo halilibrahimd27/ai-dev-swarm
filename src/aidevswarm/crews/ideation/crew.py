@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from aidevswarm.crews._prompts import load_prompt
+from aidevswarm.crews.ideation.novelty import NoveltyChecker
 from aidevswarm.logging_config import get_logger
 from aidevswarm.schemas import CriticScores, Idea, ScoredIdea
 from aidevswarm.settings import Settings
@@ -23,9 +24,15 @@ _CREW_DIR = Path(__file__).resolve().parent
 class CrewaiIdeationCrew:
     """Concrete :class:`aidevswarm.crews.protocols.IdeationCrew`."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        novelty_checker: NoveltyChecker | None = None,
+    ) -> None:
         self._settings = settings
         self._log = get_logger(__name__)
+        self._novelty = novelty_checker
         # Ideation runs BEFORE there's a project, so there's no
         # project-scoped SteeringRepo to pull from. The {{ steering_notes }}
         # slot in each template is rendered to an empty string here.
@@ -96,8 +103,33 @@ class CrewaiIdeationCrew:
             self._crew = self._build_crew()
         result = self._crew.kickoff()
         parsed = self._parse(result)
+        if self._novelty is not None:
+            parsed = [self._apply_novelty(s) for s in parsed]
         self._log.info("ideation.done", count=len(parsed))
         return parsed
+
+    def _apply_novelty(self, scored: ScoredIdea) -> ScoredIdea:
+        """Re-grade the Critic's verdict against the novelty check.
+
+        If the prior-art search finds something too close, force the
+        ``ScoredIdea`` below the 80-point gate by flipping the
+        ``novelty`` sub-score and writing a ``rejected_reason``.
+        """
+        if self._novelty is None:
+            return scored
+        report = self._novelty.check(scored.idea)
+        if report.is_novel:
+            return scored
+        match_summary = ", ".join(m.title for m in report.top_matches[:3])
+        return scored.model_copy(
+            update={
+                "scores": scored.scores.model_copy(update={"novelty": 0}),
+                "total": min(scored.total, 50),
+                "rejected_reason": (
+                    f"low novelty (score={report.score:.2f}); matches: {match_summary}"
+                ),
+            }
+        )
 
     @staticmethod
     def _parse(crew_output: Any) -> list[ScoredIdea]:

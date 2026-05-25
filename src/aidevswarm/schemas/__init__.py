@@ -12,6 +12,7 @@ from aidevswarm.schemas.milestone import (
     MilestoneGraph,
     MilestoneSpec,
 )
+from aidevswarm.schemas.novelty import Match, NoveltyReport
 from aidevswarm.schemas.project import (
     TERMINAL_MILESTONE_STATES,
     TERMINAL_PROJECT_STATES,
@@ -28,12 +29,14 @@ __all__ = [
     "AcceptanceCriterion",
     "CriticScores",
     "Idea",
+    "Match",
     "Milestone",
     "MilestoneBuildResult",
     "MilestoneGraph",
     "MilestoneSession",
     "MilestoneSpec",
     "MilestoneState",
+    "NoveltyReport",
     "Project",
     "ProjectSpec",
     "ProjectState",
