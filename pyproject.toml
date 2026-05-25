@@ -15,9 +15,10 @@ dependencies = [
   "litellm>=1.50,<2.0",
 
   # Persistence + cache
-  "psycopg[binary]>=3.2,<4.0",
+  "psycopg[binary,pool]>=3.2,<4.0",
   "pgvector>=0.3,<0.4",
   "redis>=5.0,<6.0",
+  "alembic>=1.13,<2.0",
 
   # HTTP / control plane (FastAPI is wired in Phase 5; install now for env stability)
   "fastapi>=0.115,<0.116",
@@ -27,10 +28,15 @@ dependencies = [
   # Telegram (one-way send in Phase 0; rich control in Phase 5)
   "python-telegram-bot>=21.6,<22.0",
 
-  # Models + settings + logging
+  # Models + settings + logging + templating
   "pydantic>=2.9,<3.0",
   "pydantic-settings>=2.5,<3.0",
   "structlog>=24.4,<25.0",
+  "jinja2>=3.1,<4.0",
+
+  # Observability (Arize Phoenix self-hosted + OpenInference CrewAI)
+  "arize-phoenix-otel>=0.7,<1.0",
+  "openinference-instrumentation-crewai>=1.1.4,<2.0",
 ]
 
 [project.optional-dependencies]
