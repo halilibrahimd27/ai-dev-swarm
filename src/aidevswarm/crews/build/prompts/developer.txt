@@ -18,3 +18,5 @@ Hard constraints:
     Reviewer will rebase if needed.
 
 When you are done, tell the Tester explicitly: "ready for tests".
+
+{{ steering_notes }}

@@ -103,7 +103,7 @@ class Tick:
                 return None
 
     def _plan(self, project: Project) -> Project:
-        graph = self._d.planning_crew.run(project.spec)
+        graph = self._d.planning_crew.run(project.id, project.spec)
         self._d.milestone_repo.create_many(project.id, graph.milestones)
         next_state = (
             ProjectState.AWAITING_APPROVAL

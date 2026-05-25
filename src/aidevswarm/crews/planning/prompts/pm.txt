@@ -15,3 +15,5 @@ day is too big. The build crew commits to git per milestone, so each
 must be independently completable.
 
 Return STRICT JSON conforming to `MilestoneGraph`. No prose, no markdown.
+
+{{ steering_notes }}

@@ -15,3 +15,5 @@ Output a concise brief (≤ 250 words) per candidate space describing:
 
 Do NOT propose ideas yet — only the spaces. The Ideator will turn each
 space into a concrete project. Aim for THREE candidate spaces per run.
+
+{{ steering_notes }}

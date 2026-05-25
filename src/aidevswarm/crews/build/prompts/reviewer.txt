@@ -15,3 +15,5 @@ Process:
 If you reject, write a concrete, prioritised list of fixes and send
 the milestone back to the Developer. The retry counter increases by
 one only when you reject and the build re-runs.
+
+{{ steering_notes }}

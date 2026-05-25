@@ -15,3 +15,5 @@ Constraints:
 
 Return STRICT JSON: a single `MilestoneGraph` with `technical_note`
 filled in for every milestone. No prose, no markdown.
+
+{{ steering_notes }}

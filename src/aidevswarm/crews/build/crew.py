@@ -8,6 +8,9 @@ Phase 2 replaces the Developer with a Claude Agent SDK tool.
 The actual CI gate is delegated to the supplied :class:`Sandbox`
 instance — the build crew is NOT trusted to mark a milestone done on
 its own.
+
+Steering notes are pulled per role just before kickoff so each milestone
+picks up whatever the operator has queued since the last build run.
 """
 
 from __future__ import annotations
@@ -15,11 +18,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from aidevswarm.crews._prompts import load_prompt
 from aidevswarm.logging_config import get_logger
 from aidevswarm.schemas import Milestone, MilestoneBuildResult
 from aidevswarm.settings import Settings
+from aidevswarm.steering import SteeringRepo, render_prompt
 from aidevswarm.tools import Sandbox, Workspace
 
 _CREW_DIR = Path(__file__).resolve().parent
@@ -28,20 +33,42 @@ _CREW_DIR = Path(__file__).resolve().parent
 class CrewaiBuildCrew:
     """Concrete :class:`aidevswarm.crews.protocols.BuildCrew`."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        steering_repo: SteeringRepo | None = None,
+    ) -> None:
         self._settings = settings
         self._log = get_logger(__name__)
-        self._developer_prompt = load_prompt(_CREW_DIR, "developer")
-        self._tester_prompt = load_prompt(_CREW_DIR, "tester")
-        self._reviewer_prompt = load_prompt(_CREW_DIR, "reviewer")
+        self._steering = steering_repo
+        self._developer_template = load_prompt(_CREW_DIR, "developer")
+        self._tester_template = load_prompt(_CREW_DIR, "tester")
+        self._reviewer_template = load_prompt(_CREW_DIR, "reviewer")
+
+    def _pull(self, project_id: UUID, role: str) -> list[str]:
+        if self._steering is None:
+            return []
+        return self._steering.pull_unconsumed(project_id, role)
 
     def _build_crew(self, milestone: Milestone, workspace: Workspace) -> Any:
         from crewai import Agent, Crew, Process, Task
 
+        pid = milestone.project_id
+        dev_backstory = render_prompt(
+            self._developer_template, steering_notes=self._pull(pid, "Developer")
+        )
+        tester_backstory = render_prompt(
+            self._tester_template, steering_notes=self._pull(pid, "Tester")
+        )
+        reviewer_backstory = render_prompt(
+            self._reviewer_template, steering_notes=self._pull(pid, "Reviewer")
+        )
+
         developer = Agent(
             role="Developer",
             goal="Implement the milestone in the persistent workspace.",
-            backstory=self._developer_prompt,
+            backstory=dev_backstory,
             llm=self._settings.model_strong,
             verbose=False,
             allow_delegation=False,
@@ -49,7 +76,7 @@ class CrewaiBuildCrew:
         tester = Agent(
             role="Tester",
             goal="Write/expand tests and run the CI gate to verify.",
-            backstory=self._tester_prompt,
+            backstory=tester_backstory,
             llm=self._settings.model_strong,
             verbose=False,
             allow_delegation=False,
@@ -57,7 +84,7 @@ class CrewaiBuildCrew:
         reviewer = Agent(
             role="Reviewer",
             goal="Approve only if acceptance criteria are genuinely met.",
-            backstory=self._reviewer_prompt,
+            backstory=reviewer_backstory,
             llm=self._settings.model_strong,
             verbose=False,
             allow_delegation=False,

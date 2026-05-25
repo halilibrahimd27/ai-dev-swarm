@@ -3,6 +3,10 @@
 PM decomposes the project into a milestone graph; the Architect fills
 in technical notes per milestone. Output is a single
 :class:`MilestoneGraph`.
+
+Steering notes are pulled per role at the start of each ``run()`` call
+so notes the operator adds mid-cycle are picked up on the next planning
+pass.
 """
 
 from __future__ import annotations
@@ -10,11 +14,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from aidevswarm.crews._prompts import load_prompt
 from aidevswarm.logging_config import get_logger
 from aidevswarm.schemas import MilestoneGraph, MilestoneSpec, ProjectSpec
 from aidevswarm.settings import Settings
+from aidevswarm.steering import SteeringRepo, render_prompt
 
 _CREW_DIR = Path(__file__).resolve().parent
 
@@ -22,20 +28,39 @@ _CREW_DIR = Path(__file__).resolve().parent
 class CrewaiPlanningCrew:
     """Concrete :class:`aidevswarm.crews.protocols.PlanningCrew`."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        steering_repo: SteeringRepo | None = None,
+    ) -> None:
         self._settings = settings
         self._log = get_logger(__name__)
-        self._pm_prompt = load_prompt(_CREW_DIR, "pm")
-        self._arch_prompt = load_prompt(_CREW_DIR, "architect")
-        self._crew_factory = self._build_crew
+        self._steering = steering_repo
+        # Store the raw templates; render per-run so steering notes added
+        # between runs are picked up.
+        self._pm_template = load_prompt(_CREW_DIR, "pm")
+        self._arch_template = load_prompt(_CREW_DIR, "architect")
 
-    def _build_crew(self, spec: ProjectSpec) -> Any:
+    def _pull(self, project_id: UUID, role: str) -> list[str]:
+        if self._steering is None:
+            return []
+        return self._steering.pull_unconsumed(project_id, role)
+
+    def _build_crew(self, project_id: UUID, spec: ProjectSpec) -> Any:
         from crewai import Agent, Crew, Process, Task
+
+        pm_backstory = render_prompt(
+            self._pm_template, steering_notes=self._pull(project_id, "PM")
+        )
+        arch_backstory = render_prompt(
+            self._arch_template, steering_notes=self._pull(project_id, "Architect")
+        )
 
         pm = Agent(
             role="PM",
             goal="Decompose the project into 4-10 testable milestones.",
-            backstory=self._pm_prompt,
+            backstory=pm_backstory,
             llm=self._settings.model_strong,
             verbose=False,
             allow_delegation=False,
@@ -43,7 +68,7 @@ class CrewaiPlanningCrew:
         architect = Agent(
             role="Architect",
             goal="Set the technical foundation and per-milestone notes.",
-            backstory=self._arch_prompt,
+            backstory=arch_backstory,
             llm=self._settings.model_strong,
             verbose=False,
             allow_delegation=False,
@@ -73,8 +98,8 @@ class CrewaiPlanningCrew:
             verbose=False,
         )
 
-    def run(self, spec: ProjectSpec) -> MilestoneGraph:
-        crew = self._crew_factory(spec)
+    def run(self, project_id: UUID, spec: ProjectSpec) -> MilestoneGraph:
+        crew = self._build_crew(project_id, spec)
         result = crew.kickoff()
         graph = self._parse(result)
         self._log.info("planning.done", milestones=len(graph.milestones))

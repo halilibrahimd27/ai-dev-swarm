@@ -18,3 +18,5 @@ Hard constraints:
 
 Return STRICT JSON conforming to the `Idea` Pydantic schema; never
 emit markdown fences or commentary.
+
+{{ steering_notes }}

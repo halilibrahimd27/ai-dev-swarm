@@ -26,9 +26,14 @@ class CrewaiIdeationCrew:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._log = get_logger(__name__)
-        self._scout_prompt = load_prompt(_CREW_DIR, "trend_scout")
-        self._ideator_prompt = load_prompt(_CREW_DIR, "ideator")
-        self._critic_prompt = load_prompt(_CREW_DIR, "critic")
+        # Ideation runs BEFORE there's a project, so there's no
+        # project-scoped SteeringRepo to pull from. The {{ steering_notes }}
+        # slot in each template is rendered to an empty string here.
+        from aidevswarm.steering import render_prompt
+
+        self._scout_prompt = render_prompt(load_prompt(_CREW_DIR, "trend_scout"), steering_notes=[])
+        self._ideator_prompt = render_prompt(load_prompt(_CREW_DIR, "ideator"), steering_notes=[])
+        self._critic_prompt = render_prompt(load_prompt(_CREW_DIR, "critic"), steering_notes=[])
         # CrewAI's Agent(llm=...) eagerly contacts the LLM provider, so
         # the actual crew is constructed lazily on the first run() call
         # to let the orchestrator boot even before an API key is set.

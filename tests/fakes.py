@@ -199,8 +199,8 @@ class FakePlanningCrew:
 
     graph: MilestoneGraph | None = None
 
-    def run(self, spec: ProjectSpec) -> MilestoneGraph:
-        del spec
+    def run(self, project_id: UUID, spec: ProjectSpec) -> MilestoneGraph:
+        del project_id, spec
         if self.graph is None:
             raise AssertionError("FakePlanningCrew was called without a graph")
         return self.graph

@@ -15,3 +15,5 @@ month to a backlog of weak ones.
 
 Return STRICT JSON: a list of `ScoredIdea` objects (idea + scores +
 total + optional rejected_reason). No prose, no markdown.
+
+{{ steering_notes }}

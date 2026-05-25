@@ -14,3 +14,5 @@ Process:
 
 Never weaken or skip tests. If a check is flaky, mark it and route
 back to the Developer rather than retrying.
+
+{{ steering_notes }}
