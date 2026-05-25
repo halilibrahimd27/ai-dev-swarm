@@ -1,0 +1,51 @@
+# GitHub Actions CI for generated projects.
+#
+# The Architect agent copies this file into every project the swarm
+# publishes. The same gauntlet runs locally inside the sandbox image
+# (see docker/run-ci.sh) so what fails in CI also fails on disk.
+
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pipx install uv
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: mypy --strict
+        run: |
+          if [ -d src ]; then
+            uv run mypy --strict src
+          else
+            uv run mypy --strict .
+          fi
+
+      - name: pytest
+        run: uv run pytest -q
