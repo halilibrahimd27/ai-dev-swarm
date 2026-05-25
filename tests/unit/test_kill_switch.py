@@ -1,0 +1,68 @@
+"""Unit tests for the kill switch.
+
+Uses :class:`InMemoryKillSwitch` directly (no Redis) and verifies the
+Redis-backed impl via a tiny fake redis client implementing the same
+slice of the protocol.
+"""
+
+from __future__ import annotations
+
+from aidevswarm.tools.kill_switch import (
+    KEY_FLAG,
+    KEY_REASON,
+    InMemoryKillSwitch,
+    RedisKillSwitch,
+)
+
+
+class _FakeRedis:
+    """Just enough of the redis-py surface to back the kill switch."""
+
+    def __init__(self) -> None:
+        self.store: dict[str, str] = {}
+
+    def get(self, name: str) -> bytes | None:
+        value = self.store.get(name)
+        return value.encode() if value is not None else None
+
+    def set(self, name: str, value: str) -> bool:
+        self.store[name] = value
+        return True
+
+    def delete(self, *names: str) -> int:
+        removed = 0
+        for n in names:
+            if n in self.store:
+                del self.store[n]
+                removed += 1
+        return removed
+
+
+def test_in_memory_kill_switch_round_trip() -> None:
+    ks = InMemoryKillSwitch()
+    assert ks.is_tripped() is False
+    ks.trip("budget runaway")
+    assert ks.is_tripped() is True
+    ks.reset()
+    assert ks.is_tripped() is False
+
+
+def test_redis_kill_switch_writes_flag_and_reason() -> None:
+    fake = _FakeRedis()
+    ks = RedisKillSwitch(fake)
+    assert ks.is_tripped() is False
+    ks.trip("manual halt")
+    assert fake.store[KEY_FLAG] == "1"
+    assert fake.store[KEY_REASON] == "manual halt"
+    assert ks.is_tripped() is True
+    ks.reset()
+    assert fake.store == {}
+    assert ks.is_tripped() is False
+
+
+def test_redis_kill_switch_trip_without_reason_does_not_write_reason() -> None:
+    fake = _FakeRedis()
+    ks = RedisKillSwitch(fake)
+    ks.trip()
+    assert KEY_FLAG in fake.store
+    assert KEY_REASON not in fake.store
