@@ -33,6 +33,7 @@ def test_project_state_values_match_architecture() -> None:
         "planning",
         "awaiting_approval",
         "building",
+        "replanning",
         "integration",
         "done",
         "blocked",

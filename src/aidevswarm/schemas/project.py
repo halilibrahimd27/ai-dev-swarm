@@ -23,6 +23,7 @@ class ProjectState(StrEnum):
     PLANNING = "planning"
     AWAITING_APPROVAL = "awaiting_approval"
     BUILDING = "building"
+    REPLANNING = "replanning"
     INTEGRATION = "integration"
     DONE = "done"
     BLOCKED = "blocked"

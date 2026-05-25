@@ -34,7 +34,15 @@ PROJECT_TRANSITIONS: Final[dict[ProjectState, frozenset[ProjectState]]] = {
     ),
     ProjectState.AWAITING_APPROVAL: frozenset({ProjectState.BUILDING, ProjectState.KILLED}),
     ProjectState.BUILDING: frozenset(
-        {ProjectState.INTEGRATION, ProjectState.BLOCKED, ProjectState.KILLED}
+        {
+            ProjectState.REPLANNING,
+            ProjectState.INTEGRATION,
+            ProjectState.BLOCKED,
+            ProjectState.KILLED,
+        }
+    ),
+    ProjectState.REPLANNING: frozenset(
+        {ProjectState.BUILDING, ProjectState.BLOCKED, ProjectState.KILLED}
     ),
     ProjectState.INTEGRATION: frozenset(
         {ProjectState.DONE, ProjectState.BLOCKED, ProjectState.KILLED}
