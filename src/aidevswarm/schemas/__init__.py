@@ -21,13 +21,16 @@ from aidevswarm.schemas.project import (
     ProjectSpec,
     ProjectState,
 )
+from aidevswarm.schemas.replanner import Amend, Escalate, Noop, ReplannerAction, Split
 from aidevswarm.schemas.session import MilestoneSession
 
 __all__ = [
     "TERMINAL_MILESTONE_STATES",
     "TERMINAL_PROJECT_STATES",
     "AcceptanceCriterion",
+    "Amend",
     "CriticScores",
+    "Escalate",
     "Idea",
     "Match",
     "Milestone",
@@ -36,9 +39,12 @@ __all__ = [
     "MilestoneSession",
     "MilestoneSpec",
     "MilestoneState",
+    "Noop",
     "NoveltyReport",
     "Project",
     "ProjectSpec",
     "ProjectState",
+    "ReplannerAction",
     "ScoredIdea",
+    "Split",
 ]
