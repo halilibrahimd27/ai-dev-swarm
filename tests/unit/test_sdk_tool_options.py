@@ -168,6 +168,25 @@ def test_sdkresult_is_a_frozen_dataclass() -> None:
         r.success = False  # type: ignore[misc]
 
 
+def test_mcp_servers_thread_through_options(tmp_path: Path) -> None:
+    """The mcp_servers dict passed at __init__ time lands in ClaudeAgentOptions."""
+    repo = FakeMilestoneSessionRepo()
+    mcp = {
+        "tree-sitter": {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@nendo/tree-sitter-mcp", "--mcp"],
+        }
+    }
+    tool = ClaudeAgentSDKDeveloperTool(Settings(), repo, mcp_servers=mcp)  # type: ignore[arg-type]
+    ms = _milestone()
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+    opts = tool.build_options(ms, ws, max_turns=10, max_budget_usd=1.0, resume=None)
+    assert isinstance(opts.mcp_servers, dict)
+    assert "tree-sitter" in opts.mcp_servers
+
+
 def test_developer_and_tester_have_template_files() -> None:
     """Constructing the tool loads the template; if the file is missing
     the constructor would raise — so this also guards the prompts/
