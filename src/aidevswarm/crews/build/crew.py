@@ -132,7 +132,8 @@ class CrewaiBuildCrew:
             agents=[reviewer],
             tasks=[
                 Task(
-                    description=ctx + "Approve and emit MilestoneBuildResult JSON, or reject with fixes.",
+                    description=ctx
+                    + "Approve and emit MilestoneBuildResult JSON, or reject with fixes.",
                     expected_output="JSON MilestoneBuildResult",
                     agent=reviewer,
                 )

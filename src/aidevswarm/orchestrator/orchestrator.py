@@ -58,9 +58,7 @@ def _build_tick(settings: Settings) -> Tick:
         milestone_repo=milestone_repo,
         ideation_crew=CrewaiIdeationCrew(settings),
         planning_crew=CrewaiPlanningCrew(settings),
-        build_crew=CrewaiBuildCrew(
-            settings, session_repo, mcp_servers=load_mcp_servers()
-        ),
+        build_crew=CrewaiBuildCrew(settings, session_repo, mcp_servers=load_mcp_servers()),
         workspace_manager=WorkspaceManager(settings.workspaces_dir),
         sandbox=DockerSandbox(),
         telegram=TelegramNotifier(settings),

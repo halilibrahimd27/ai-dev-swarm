@@ -3,7 +3,7 @@
 Local autonomous multi-agent development system that designs, builds,
 tests, and ships niche software projects to GitHub on its own.
 
-> **Status:** Phase 1 (stop the bleeding). The full onboarding README,
+> **Status:** Phase 2 (real coding loop). The full onboarding README,
 > ADRs, threat model, and security policy land in Phase 6. This file
 > is a placeholder.
 
@@ -40,6 +40,21 @@ those, override before running:
 ```bash
 POSTGRES_HOST_PORT=5433 REDIS_HOST_PORT=6380 make up
 ```
+
+### Manual SDK smoke (Phase 2)
+
+The fizzbuzz integration test exercises the Claude Agent SDK
+end-to-end through the new build crew. It is skipped automatically
+unless an API key is set so the default gauntlet stays free.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+uv run pytest tests/integration/test_fizzbuzz_smoke.py -m anthropic -v
+```
+
+Watch http://localhost:6006 (Phoenix) — you should see a nested span
+tree per run: ``sdk.developer`` / ``sdk.tester`` → SDK tool calls
+(``Read``, ``Edit``, ``Bash``) → tree-sitter MCP calls.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design.
 

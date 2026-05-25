@@ -136,6 +136,7 @@ asyncio_mode = "auto"
 markers = [
   "integration: end-to-end smoke tests (slower; no external services required)",
   "slow: long-running tests",
+  "anthropic: tests that call the live Anthropic API; require ANTHROPIC_API_KEY",
 ]
 filterwarnings = [
   "error",

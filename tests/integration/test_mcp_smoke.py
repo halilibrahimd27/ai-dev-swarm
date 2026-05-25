@@ -20,9 +20,9 @@ pytestmark = pytest.mark.integration
 
 
 def test_mcp_json_is_present_at_repo_root() -> None:
-    assert DEFAULT_MCP_JSON.is_file(), (
-        f"{DEFAULT_MCP_JSON} missing — the SDK can't wire tree-sitter-mcp"
-    )
+    assert (
+        DEFAULT_MCP_JSON.is_file()
+    ), f"{DEFAULT_MCP_JSON} missing — the SDK can't wire tree-sitter-mcp"
 
 
 def test_tree_sitter_mcp_is_configured() -> None:
