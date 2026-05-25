@@ -142,7 +142,7 @@ class Settings(BaseSettings):
         # docker publish line `127.0.0.1:8080:8080` which binds only the
         # host's loopback (see docker-compose.yml). Outside docker the
         # operator should keep 127.0.0.1 to prevent LAN exposure.
-        allowed = {"127.0.0.1", "localhost", "0.0.0.0"}  # noqa: S104
+        allowed = {"127.0.0.1", "localhost", "0.0.0.0"}  # nosec B104
         if v not in allowed:
             raise ValueError(
                 f"AIDEVSWARM_API_HOST must be one of {sorted(allowed)} "
