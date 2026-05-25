@@ -84,6 +84,15 @@ class Settings(BaseSettings):
         validation_alias="AIDEVSWARM_WORKSPACES_DIR",
     )
 
+    # --- Observability (Arize Phoenix) ------------------------------------
+    phoenix_enabled: bool = Field(
+        default=True, validation_alias="AIDEVSWARM_PHOENIX_ENABLED"
+    )
+    phoenix_endpoint: str = Field(
+        default="http://phoenix:6006/v1/traces",
+        validation_alias="AIDEVSWARM_PHOENIX_ENDPOINT",
+    )
+
     @property
     def pg_dsn(self) -> str:
         """psycopg-compatible DSN; password is unwrapped only here."""

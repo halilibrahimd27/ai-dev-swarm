@@ -1,8 +1,8 @@
 # ai-dev-swarm — base stack.
 #
-# Brings up Postgres+pgvector, Redis, and the orchestrator container.
-# Phoenix is intentionally NOT included — Phase 1 adds it via
-# `docker/phoenix.yml` (compose -f docker/compose.yml -f docker/phoenix.yml).
+# Brings up Postgres+pgvector, Redis, Phoenix (observability), and the
+# orchestrator container. The standalone `docker/phoenix.yml` is kept
+# for operators who only want Phoenix without the rest of the stack.
 
 name: aidevswarm
 
@@ -41,6 +41,30 @@ services:
       timeout: 3s
       retries: 5
 
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: aidevswarm-phoenix
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+    volumes:
+      - phoenix_data:/mnt/data
+    ports:
+      - "6006:6006"   # UI + OTLP HTTP (/v1/traces)
+      - "4317:4317"   # OTLP gRPC
+    restart: unless-stopped
+    healthcheck:
+      # The Phoenix image ships without wget/curl; the bundled python3
+      # is the only HTTP probe available.
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import urllib.request,sys; r=urllib.request.urlopen('http://localhost:6006/healthz', timeout=2); sys.exit(0 if r.status==200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
   orchestrator:
     build:
       context: ..
@@ -51,12 +75,15 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      phoenix:
+        condition: service_healthy
     environment:
       AIDEVSWARM_PG_HOST: postgres
       AIDEVSWARM_PG_PORT: "5432"
       AIDEVSWARM_REDIS_HOST: redis
       AIDEVSWARM_REDIS_PORT: "6379"
       AIDEVSWARM_WORKSPACES_DIR: /workspace/workspaces
+      AIDEVSWARM_PHOENIX_ENDPOINT: http://phoenix:6006/v1/traces
       POSTGRES_USER: ${POSTGRES_USER:-aidevswarm}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
       POSTGRES_DB: ${POSTGRES_DB:-aidevswarm}
@@ -82,3 +109,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  phoenix_data:

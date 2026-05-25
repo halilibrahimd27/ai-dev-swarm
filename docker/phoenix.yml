@@ -11,10 +11,17 @@ services:
       - phoenix_data:/mnt/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:6006/healthz"]
+      # The Phoenix image ships without wget/curl; bundled python3 is
+      # the only HTTP probe available.
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import urllib.request,sys; r=urllib.request.urlopen('http://localhost:6006/healthz', timeout=2); sys.exit(0 if r.status==200 else 1)"
       interval: 10s
-      timeout: 3s
+      timeout: 5s
       retries: 6
+      start_period: 30s
 
 volumes:
   phoenix_data:

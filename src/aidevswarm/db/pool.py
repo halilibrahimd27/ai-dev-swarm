@@ -53,9 +53,7 @@ def open_pool(settings: Settings) -> ConnectionPool:
 def get_pool() -> ConnectionPool:
     """Return the open pool. Raises if :func:`open_pool` was not called."""
     if _pool is None:
-        raise RuntimeError(
-            "Connection pool not opened — call open_pool(settings) first"
-        )
+        raise RuntimeError("Connection pool not opened — call open_pool(settings) first")
     return _pool
 
 

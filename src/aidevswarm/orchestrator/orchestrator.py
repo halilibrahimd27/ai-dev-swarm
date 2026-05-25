@@ -19,6 +19,7 @@ from aidevswarm.db.repositories import (
     PsycopgTokenLogRepo,
 )
 from aidevswarm.logging_config import configure_logging, get_logger
+from aidevswarm.observability import bootstrap_phoenix
 from aidevswarm.orchestrator.scheduler import IntervalJob, Scheduler
 from aidevswarm.orchestrator.tick import Tick, TickDeps
 from aidevswarm.settings import Settings, load_settings
@@ -69,6 +70,10 @@ async def _async_main() -> None:
     configure_logging(json_logs=True)
     log = get_logger(__name__)
     log.info("orchestrator.start", tick_seconds=settings.tick_seconds)
+
+    # Phoenix MUST be wired before any CrewAI Agent is built so every
+    # agent call lands in the trace tree.
+    bootstrap_phoenix(settings)
 
     tick = _build_tick(settings)
 
