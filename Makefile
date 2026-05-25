@@ -31,6 +31,12 @@ test: ## Run the full pytest suite quietly.
 smoke: ## Run only the integration smoke test.
 	$(UV) run pytest -q -m integration
 
+migrate: ## Apply Alembic migrations against the configured Postgres.
+	$(UV) run alembic upgrade head
+
+migration: ## Generate a new empty migration (usage: make migration name=add_widgets)
+	$(UV) run alembic revision -m "$(name)"
+
 up: ## Bring up postgres + redis + orchestrator.
 	$(COMPOSE) up -d --build
 
