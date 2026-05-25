@@ -18,18 +18,21 @@ brew install uv && uv python install 3.12
 # 2. Install dependencies.
 uv sync --extra dev
 
-# 3. Run the verification gauntlet.
+# 3. Bootstrap the tree-sitter MCP config (gitignored — copy from template).
+cp .mcp.example.json .mcp.json
+
+# 4. Run the verification gauntlet.
 make lint typecheck test
 
-# 4. Bring up the stack (Postgres + Redis + Phoenix + orchestrator).
+# 5. Bring up the stack (Postgres + Redis + Phoenix + orchestrator).
 cp .env.example .env       # then fill in real values
 make up
 make logs                  # tail the orchestrator
 
-# 5. Apply database migrations (steering_notes etc).
+# 6. Apply database migrations (steering_notes etc).
 make migrate
 
-# 6. Open Phoenix to watch CrewAI traces.
+# 7. Open Phoenix to watch CrewAI traces.
 open http://localhost:6006
 ```
 

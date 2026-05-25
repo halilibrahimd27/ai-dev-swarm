@@ -75,5 +75,12 @@ jobs:
       - name: Apply Alembic migrations
         run: uv run alembic upgrade head
 
+      - name: Materialise .mcp.json from the example template
+        # .mcp.json is gitignored (it's part of the build kit); fresh
+        # clones bootstrap it from the committed .mcp.example.json. The
+        # SDK Developer/Tester agents need tree-sitter-mcp wired in for
+        # the Phase 2 MCP smoke tests to pass.
+        run: cp .mcp.example.json .mcp.json
+
       - name: Run gauntlet (L0..L6, L8)
         run: make verify

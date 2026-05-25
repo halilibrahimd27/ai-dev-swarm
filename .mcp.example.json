@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "tree-sitter-mcp": {
+      "command": "npx",
+      "args": ["-y", "@nendo/tree-sitter-mcp", "--mcp"],
+      "timeout": 30000
+    }
+  }
+}
