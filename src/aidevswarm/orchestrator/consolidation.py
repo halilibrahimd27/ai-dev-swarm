@@ -20,9 +20,7 @@ from aidevswarm.schemas import (
 CONSOLIDATION_MARKER = "[CONSOLIDATION]"
 
 
-def should_insert_consolidation(
-    milestones: Sequence[Milestone], *, every: int = 5
-) -> bool:
+def should_insert_consolidation(milestones: Sequence[Milestone], *, every: int = 5) -> bool:
     """True when we just crossed an Nth-completed-milestone boundary.
 
     Counts ``done`` milestones (excluding existing consolidation
@@ -38,10 +36,7 @@ def should_insert_consolidation(
             continue
         if m.state is MilestoneState.DONE:
             done_since_last_consolidation += 1
-    return (
-        done_since_last_consolidation > 0
-        and done_since_last_consolidation % every == 0
-    )
+    return done_since_last_consolidation > 0 and done_since_last_consolidation % every == 0
 
 
 def build_consolidation_spec() -> MilestoneSpec:

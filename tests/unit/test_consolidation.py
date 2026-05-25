@@ -33,9 +33,7 @@ def _m(
         spec=MilestoneSpec(
             title=title,
             description="d",
-            acceptance_criteria=[
-                AcceptanceCriterion(description="x", verifier="pytest")
-            ],
+            acceptance_criteria=[AcceptanceCriterion(description="x", verifier="pytest")],
             technical_note=note,
         ),
         state=state,

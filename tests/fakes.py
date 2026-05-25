@@ -146,9 +146,7 @@ class InMemoryMilestoneRepo:
         self.rows[milestone_id] = updated
         return updated
 
-    def replace_with(
-        self, milestone_id: UUID, into: list[MilestoneSpec]
-    ) -> list[Milestone]:
+    def replace_with(self, milestone_id: UUID, into: list[MilestoneSpec]) -> list[Milestone]:
         if len(into) < 2:
             raise ValueError("replace_with requires at least 2 child specs")
         parent = self.rows.pop(milestone_id)

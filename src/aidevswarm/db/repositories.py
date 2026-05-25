@@ -234,9 +234,7 @@ class PsycopgMilestoneRepo:
         because the schema has ``extra='forbid'``.
         """
         with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
-                "SELECT * FROM milestones WHERE id = %s", (str(milestone_id),)
-            )
+            cur.execute("SELECT * FROM milestones WHERE id = %s", (str(milestone_id),))
             current = cur.fetchone()
             if current is None:
                 raise LookupError(f"milestone {milestone_id} not found")
@@ -253,9 +251,7 @@ class PsycopgMilestoneRepo:
             assert row is not None
             return _milestone_from_row(row)
 
-    def replace_with(
-        self, milestone_id: UUID, into: list[MilestoneSpec]
-    ) -> list[Milestone]:
+    def replace_with(self, milestone_id: UUID, into: list[MilestoneSpec]) -> list[Milestone]:
         """Replace one milestone with N children (Phase 4 Split).
 
         Children inherit the project_id + the deleted milestone's

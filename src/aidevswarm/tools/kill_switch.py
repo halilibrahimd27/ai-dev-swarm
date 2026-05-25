@@ -76,9 +76,7 @@ class RedisKillSwitch:
             self._client.set(_project_key(project_id) + ":reason", reason)
 
     def reset_for(self, project_id: UUID) -> None:
-        self._client.delete(
-            _project_key(project_id), _project_key(project_id) + ":reason"
-        )
+        self._client.delete(_project_key(project_id), _project_key(project_id) + ":reason")
 
 
 class InMemoryKillSwitch:

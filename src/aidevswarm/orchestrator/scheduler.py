@@ -121,9 +121,7 @@ class ProjectPool:
         self._tasks: list[asyncio.Task[None]] = []
 
     async def run_forever(self) -> None:
-        self._tasks = [
-            asyncio.create_task(self._worker(i)) for i in range(self._concurrency)
-        ]
+        self._tasks = [asyncio.create_task(self._worker(i)) for i in range(self._concurrency)]
         try:
             await asyncio.gather(*self._tasks)
         except asyncio.CancelledError:
@@ -135,9 +133,7 @@ class ProjectPool:
 
         Useful for tests that want deterministic step counts.
         """
-        results = await asyncio.gather(
-            *(self._step(i) for i in range(self._concurrency))
-        )
+        results = await asyncio.gather(*(self._step(i) for i in range(self._concurrency)))
         return sum(1 for r in results if r is True)
 
     async def shutdown(self) -> None:
@@ -167,9 +163,7 @@ class ProjectPool:
                 project=project.name,
                 state=project.state.value,
             )
-            updated = await asyncio.to_thread(
-                self._tick.advance_project, project
-            )
+            updated = await asyncio.to_thread(self._tick.advance_project, project)
             if updated is not None and updated.state in TERMINAL_PROJECT_STATES:
                 self._log.info(
                     "project_pool.terminal",

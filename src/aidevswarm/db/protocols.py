@@ -50,9 +50,7 @@ class MilestoneRepo(Protocol):
     def replace_with(self, milestone_id: UUID, into: list[MilestoneSpec]) -> list[Milestone]:
         """Replace one milestone with N children (Phase 4 Split)."""
 
-    def insert_after(
-        self, milestone_id: UUID, spec: MilestoneSpec
-    ) -> Milestone:
+    def insert_after(self, milestone_id: UUID, spec: MilestoneSpec) -> Milestone:
         """Insert a new milestone immediately after ``milestone_id``.
 
         Subsequent milestones have their ordinals bumped by one so the

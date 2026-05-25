@@ -206,14 +206,10 @@ class Tick:
         milestones = self._d.milestone_repo.list_for_project(project.id)
 
         # 1) Consolidation cadence.
-        if should_insert_consolidation(
-            milestones, every=self._d.settings.consolidation_every
-        ):
+        if should_insert_consolidation(milestones, every=self._d.settings.consolidation_every):
             last_done = _last_done(milestones)
             if last_done is not None:
-                self._d.milestone_repo.insert_after(
-                    last_done.id, build_consolidation_spec()
-                )
+                self._d.milestone_repo.insert_after(last_done.id, build_consolidation_spec())
                 self._log.info(
                     "tick.consolidation_inserted",
                     project=project.name,
@@ -234,9 +230,7 @@ class Tick:
 
         # 4) Replanner crew (LLM): always Noop-on-error so we never
         #    take the project down because of a tracing or quota blip.
-        recent_sessions = _recent_sessions(
-            self._d.session_repo, milestones, limit=6
-        )
+        recent_sessions = _recent_sessions(self._d.session_repo, milestones, limit=6)
         action = self._d.replanning_crew.run(
             project=project,
             next_milestone=next_milestone,
@@ -288,9 +282,7 @@ class Tick:
                 self._d.telegram.send(
                     f"[ai-dev-swarm] project '{project.name}' escalated: {action.reason}"
                 )
-                self._log.info(
-                    "replanner.escalate", project=project.name, reason=action.reason
-                )
+                self._log.info("replanner.escalate", project=project.name, reason=action.reason)
                 return self._move(project, ProjectState.BLOCKED)
 
     # ------------------------------------------------------------------
