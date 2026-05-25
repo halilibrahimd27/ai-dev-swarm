@@ -78,6 +78,22 @@ class Settings(BaseSettings):
     require_approval: bool = Field(default=True, validation_alias="AIDEVSWARM_REQUIRE_APPROVAL")
     tick_seconds: int = Field(default=30, validation_alias="AIDEVSWARM_TICK_SECONDS")
 
+    # --- Phase 4 replanner ------------------------------------------------
+    # Auto-split fires BEFORE the LLM-driven replanner crew runs. It's a
+    # cheap circuit breaker — if a milestone's predicted turns/cost
+    # exceeds these caps, the milestone is mechanically split into two.
+    auto_split_max_turns: int = Field(
+        default=40, validation_alias="AIDEVSWARM_AUTO_SPLIT_MAX_TURNS"
+    )
+    auto_split_max_cost_usd: float = Field(
+        default=3.0, validation_alias="AIDEVSWARM_AUTO_SPLIT_MAX_COST_USD"
+    )
+    # Consolidation cadence (Phase 4). Every Nth completed milestone is
+    # followed by a no-features-allowed "tidy + verify" milestone.
+    consolidation_every: int = Field(
+        default=5, validation_alias="AIDEVSWARM_CONSOLIDATION_EVERY"
+    )
+
     # --- Workspace --------------------------------------------------------
     workspaces_dir: Path = Field(
         default=Path("/workspace/workspaces"),
