@@ -5,9 +5,9 @@
 Local autonomous multi-agent development system that designs, builds,
 tests, and ships niche software projects to GitHub on its own.
 
-> **Status:** Phase 3 (objective quality). The full onboarding README,
-> ADRs, threat model, and security policy land in Phase 6. This file
-> is a placeholder.
+> **Status:** Phase 4 (long-horizon robustness). The full onboarding
+> README, ADRs, threat model, and security policy land in Phase 6.
+> This file is a placeholder.
 
 ## Quick start (developer-facing)
 
@@ -71,6 +71,32 @@ uv run pytest tests/integration/test_fizzbuzz_smoke.py -m anthropic -v
 Watch http://localhost:6006 (Phoenix) — you should see a nested span
 tree per run: ``sdk.developer`` / ``sdk.tester`` → SDK tool calls
 (``Read``, ``Edit``, ``Bash``) → tree-sitter MCP calls.
+
+### Replanner + consolidation (Phase 4)
+
+Every time a milestone finishes — pass or fail — the orchestrator
+routes the project through a new ``REPLANNING`` state before the next
+milestone starts. Two things happen there, in order:
+
+1. ``AutoSplitPredictor`` reads the most recent Developer/Tester
+   sessions for the upcoming milestone. If predicted turns or cost
+   blow ``AIDEVSWARM_AUTO_SPLIT_MAX_TURNS`` /
+   ``AIDEVSWARM_AUTO_SPLIT_MAX_COST_USD``, the milestone is
+   mechanically bisected into two children (no LLM call).
+2. Otherwise the CrewAI Replanner crew (Architect + PM) runs and
+   returns ONE typed ``ReplannerAction`` —
+   ``Noop | Amend | Split | Escalate``. ``Escalate`` lands the
+   project in ``BLOCKED`` and pings Telegram.
+
+Every fifth successful milestone an explicit ``[CONSOLIDATION]``
+milestone is injected — a no-new-features tidy + ``make verify`` pass
+the Reviewer is instructed to reject if it tries to add public API.
+
+The scheduler is now an asyncio ``ProjectPool`` with
+``AIDEVSWARM_BUILD_CONCURRENCY`` workers (default 1). Each project
+also has its own kill switch
+(``aidevswarm:kill:<project_id>`` in Redis) alongside the global
+``aidevswarm:kill_switch``.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design.
 
