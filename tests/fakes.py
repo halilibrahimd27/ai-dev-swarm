@@ -208,6 +208,36 @@ class FakePlanningCrew:
 
 
 @dataclass
+class FakeReplanningCrew:
+    """Canned-action :class:`aidevswarm.crews.replanning.ReplanningCrew`."""
+
+    action: Any = None  # ReplannerAction; default Noop set in __post_init__.
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.action is None:
+            from aidevswarm.schemas import Noop
+
+            self.action = Noop()
+
+    def run(
+        self,
+        *,
+        project: Any,
+        next_milestone: Any,
+        recent_sessions: Any,
+    ) -> Any:
+        self.calls.append(
+            {
+                "project": project,
+                "next_milestone": next_milestone,
+                "recent_sessions": list(recent_sessions),
+            }
+        )
+        return self.action
+
+
+@dataclass
 class FakeBuildCrew:
     """Marks every milestone as a successful build and writes one file."""
 
