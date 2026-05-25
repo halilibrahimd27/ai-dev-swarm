@@ -32,9 +32,7 @@ PROJECT_TRANSITIONS: Final[dict[ProjectState, frozenset[ProjectState]]] = {
             ProjectState.KILLED,
         }
     ),
-    ProjectState.AWAITING_APPROVAL: frozenset(
-        {ProjectState.BUILDING, ProjectState.KILLED}
-    ),
+    ProjectState.AWAITING_APPROVAL: frozenset({ProjectState.BUILDING, ProjectState.KILLED}),
     ProjectState.BUILDING: frozenset(
         {ProjectState.INTEGRATION, ProjectState.BLOCKED, ProjectState.KILLED}
     ),
@@ -49,9 +47,7 @@ PROJECT_TRANSITIONS: Final[dict[ProjectState, frozenset[ProjectState]]] = {
 
 MILESTONE_TRANSITIONS: Final[dict[MilestoneState, frozenset[MilestoneState]]] = {
     MilestoneState.PENDING: frozenset({MilestoneState.BUILDING}),
-    MilestoneState.BUILDING: frozenset(
-        {MilestoneState.DONE, MilestoneState.FAILED}
-    ),
+    MilestoneState.BUILDING: frozenset({MilestoneState.DONE, MilestoneState.FAILED}),
     MilestoneState.FAILED: frozenset({MilestoneState.BUILDING}),
     MilestoneState.DONE: frozenset(),
 }

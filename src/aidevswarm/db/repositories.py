@@ -10,13 +10,13 @@ Phase 1 replaces the per-call ``open_connection`` with a long-lived
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
+from aidevswarm._time import utc_now
 from aidevswarm.db.connection import open_connection
 from aidevswarm.schemas import (
     Milestone,
@@ -62,7 +62,7 @@ class PsycopgProjectRepo:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
-    def _conn(self) -> Any:  # noqa: ANN401  (psycopg.Connection cm typing)
+    def _conn(self) -> Any:
         return open_connection(self._settings)
 
     def create(self, project: Project) -> Project:
@@ -122,7 +122,7 @@ class PsycopgProjectRepo:
                 WHERE id = %s
                 RETURNING *
                 """,
-                (new_state.value, datetime.utcnow(), str(project_id)),
+                (new_state.value, utc_now(), str(project_id)),
             )
             row = cur.fetchone()
             if row is None:
@@ -134,7 +134,7 @@ class PsycopgProjectRepo:
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
                 "UPDATE projects SET github_repo = %s, updated_at = %s WHERE id = %s",
-                (repo_url, datetime.utcnow(), str(project_id)),
+                (repo_url, utc_now(), str(project_id)),
             )
             conn.commit()
 
@@ -145,12 +145,10 @@ class PsycopgMilestoneRepo:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
-    def _conn(self) -> Any:  # noqa: ANN401
+    def _conn(self) -> Any:
         return open_connection(self._settings)
 
-    def create_many(
-        self, project_id: UUID, specs: list[MilestoneSpec]
-    ) -> list[Milestone]:
+    def create_many(self, project_id: UUID, specs: list[MilestoneSpec]) -> list[Milestone]:
         rows: list[dict[str, Any]] = []
         with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
             for ordinal, spec in enumerate(specs):
@@ -194,16 +192,14 @@ class PsycopgMilestoneRepo:
             row = cur.fetchone()
             return _milestone_from_row(cast(dict[str, Any], row)) if row else None
 
-    def update_state(
-        self, milestone_id: UUID, new_state: MilestoneState
-    ) -> Milestone:
+    def update_state(self, milestone_id: UUID, new_state: MilestoneState) -> Milestone:
         with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
                 UPDATE milestones SET state = %s, updated_at = %s
                 WHERE id = %s RETURNING *
                 """,
-                (new_state.value, datetime.utcnow(), str(milestone_id)),
+                (new_state.value, utc_now(), str(milestone_id)),
             )
             row = cur.fetchone()
             if row is None:
@@ -234,7 +230,7 @@ class PsycopgMilestoneRepo:
                     new_state.value,
                     commit_hash,
                     success,
-                    datetime.utcnow(),
+                    utc_now(),
                     str(milestone_id),
                 ),
             )
@@ -251,7 +247,7 @@ class PsycopgTokenLogRepo:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
-    def _conn(self) -> Any:  # noqa: ANN401
+    def _conn(self) -> Any:
         return open_connection(self._settings)
 
     def record(

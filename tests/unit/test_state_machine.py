@@ -53,9 +53,7 @@ def test_kill_is_legal_from_every_non_terminal_project_state() -> None:
         (ProjectState.KILLED, ProjectState.PLANNING),
     ],
 )
-def test_illegal_project_transitions_raise(
-    src: ProjectState, dst: ProjectState
-) -> None:
+def test_illegal_project_transitions_raise(src: ProjectState, dst: ProjectState) -> None:
     with pytest.raises(IllegalTransition) as info:
         assert_legal_project(src, dst)
     assert info.value.kind == "project"
@@ -90,9 +88,7 @@ def test_legal_milestone_paths(src: MilestoneState, dst: MilestoneState) -> None
         (MilestoneState.FAILED, MilestoneState.DONE),
     ],
 )
-def test_illegal_milestone_transitions_raise(
-    src: MilestoneState, dst: MilestoneState
-) -> None:
+def test_illegal_milestone_transitions_raise(src: MilestoneState, dst: MilestoneState) -> None:
     with pytest.raises(IllegalTransition):
         assert_legal_milestone(src, dst)
 

@@ -49,4 +49,5 @@ def configure_logging(*, json_logs: bool = True, level: int = logging.INFO) -> N
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     """Return a structlog logger; use the module name when in doubt."""
-    return structlog.get_logger(name)
+    logger: structlog.stdlib.BoundLogger = structlog.get_logger(name)
+    return logger

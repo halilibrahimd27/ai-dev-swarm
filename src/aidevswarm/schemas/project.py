@@ -13,6 +13,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from aidevswarm._time import utc_now as _utc_now
+
 
 class ProjectState(StrEnum):
     """High-level lifecycle state of a project, per ARCHITECTURE.md §2."""
@@ -65,8 +67,8 @@ class Project(BaseModel):
     spec: ProjectSpec
     state: ProjectState = ProjectState.QUEUED
     github_repo: str | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utc_now)
+    updated_at: datetime = Field(default_factory=_utc_now)
 
     def is_terminal(self) -> bool:
         """True when the project will not transition further."""

@@ -11,10 +11,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
+from aidevswarm._time import utc_now
 from aidevswarm.schemas import (
     Milestone,
     MilestoneBuildResult,
@@ -27,7 +27,6 @@ from aidevswarm.schemas import (
     ScoredIdea,
 )
 from aidevswarm.tools import Sandbox, SandboxRun, Workspace
-
 
 # ---------------------------------------------------------------------------
 # Repositories
@@ -64,9 +63,7 @@ class InMemoryProjectRepo:
 
     def update_state(self, project_id: UUID, new_state: ProjectState) -> Project:
         existing = self.rows[project_id]
-        updated = existing.model_copy(
-            update={"state": new_state, "updated_at": datetime.utcnow()}
-        )
+        updated = existing.model_copy(update={"state": new_state, "updated_at": utc_now()})
         self.rows[project_id] = updated
         return updated
 
@@ -81,9 +78,7 @@ class InMemoryMilestoneRepo:
 
     rows: dict[UUID, Milestone] = field(default_factory=dict)
 
-    def create_many(
-        self, project_id: UUID, specs: list[MilestoneSpec]
-    ) -> list[Milestone]:
+    def create_many(self, project_id: UUID, specs: list[MilestoneSpec]) -> list[Milestone]:
         created: list[Milestone] = []
         for ordinal, spec in enumerate(specs):
             ms = Milestone(
@@ -115,13 +110,9 @@ class InMemoryMilestoneRepo:
         )
         return candidates[0] if candidates else None
 
-    def update_state(
-        self, milestone_id: UUID, new_state: MilestoneState
-    ) -> Milestone:
+    def update_state(self, milestone_id: UUID, new_state: MilestoneState) -> Milestone:
         existing = self.rows[milestone_id]
-        updated = existing.model_copy(
-            update={"state": new_state, "updated_at": datetime.utcnow()}
-        )
+        updated = existing.model_copy(update={"state": new_state, "updated_at": utc_now()})
         self.rows[milestone_id] = updated
         return updated
 
@@ -140,7 +131,7 @@ class InMemoryMilestoneRepo:
                 "state": new_state,
                 "retry_count": new_retry,
                 "commit_hash": commit_hash if commit_hash else existing.commit_hash,
-                "updated_at": datetime.utcnow(),
+                "updated_at": utc_now(),
             }
         )
         self.rows[milestone_id] = updated
@@ -232,9 +223,7 @@ class FakeBuildCrew:
         del sandbox  # we don't gate via sandbox in fakes — the real crew does
         self.calls += 1
         if not self.succeed:
-            return MilestoneBuildResult(
-                success=False, summary="forced fail", failure_reason="fake"
-            )
+            return MilestoneBuildResult(success=False, summary="forced fail", failure_reason="fake")
         # Write a tiny file so the workspace becomes dirty -> tick commits.
         (workspace.root / f"{milestone.title.replace(' ', '_')}.txt").write_text(
             f"milestone: {milestone.title}\n", encoding="utf-8"
@@ -291,8 +280,6 @@ class FakeMemoryStore:
         del embedding
         self.seen.append(project_id)
 
-    def is_duplicate(
-        self, embedding: Sequence[float], *, threshold: float = 0.92
-    ) -> bool:
+    def is_duplicate(self, embedding: Sequence[float], *, threshold: float = 0.92) -> bool:
         del embedding, threshold
         return False

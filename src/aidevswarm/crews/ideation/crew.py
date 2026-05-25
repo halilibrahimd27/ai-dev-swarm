@@ -31,7 +31,7 @@ class CrewaiIdeationCrew:
         self._critic_prompt = load_prompt(_CREW_DIR, "critic")
         self._crew = self._build_crew()
 
-    def _build_crew(self) -> Any:  # noqa: ANN401
+    def _build_crew(self) -> Any:
         from crewai import Agent, Crew, Process, Task  # local import
 
         scout = Agent(
@@ -90,15 +90,12 @@ class CrewaiIdeationCrew:
         return parsed
 
     @staticmethod
-    def _parse(crew_output: Any) -> list[ScoredIdea]:  # noqa: ANN401
+    def _parse(crew_output: Any) -> list[ScoredIdea]:
         """Be liberal in what we accept from CrewAI's loose output type."""
         import json
 
         raw = getattr(crew_output, "raw", crew_output)
-        if isinstance(raw, str):
-            data = json.loads(raw)
-        else:
-            data = raw
+        data = json.loads(raw) if isinstance(raw, str) else raw
         if not isinstance(data, list):
             raise ValueError("Critic did not return a JSON list")
         return [

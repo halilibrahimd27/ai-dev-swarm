@@ -60,7 +60,6 @@ packages = ["src/aidevswarm"]
 # ----------------------------------------------------------------------------
 [tool.uv]
 package = true
-dev-dependencies = []
 
 # ----------------------------------------------------------------------------
 # Ruff
@@ -85,6 +84,7 @@ select = [
 ]
 ignore = [
   "E501",   # line length is handled by formatter
+  "N818",   # exception names without Error suffix are fine (RuntimeError sets the precedent)
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -110,16 +110,12 @@ disallow_any_unimported = false
 ignore_missing_imports = false
 
 [[tool.mypy.overrides]]
-# CrewAI / LiteLLM / pgvector publish partial or no type info; allow.
+# CrewAI / LiteLLM publish partial or no type info; allow.
 module = [
   "crewai",
   "crewai.*",
   "litellm",
   "litellm.*",
-  "pgvector",
-  "pgvector.*",
-  "claude_agent_sdk",
-  "claude_agent_sdk.*",
 ]
 ignore_missing_imports = true
 

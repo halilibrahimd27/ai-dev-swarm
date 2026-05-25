@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from aidevswarm._time import utc_now as _utc_now
 from aidevswarm.schemas.project import MilestoneState
 
 
@@ -45,8 +46,8 @@ class Milestone(BaseModel):
     state: MilestoneState = MilestoneState.PENDING
     retry_count: int = Field(default=0, ge=0)
     commit_hash: str | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utc_now)
+    updated_at: datetime = Field(default_factory=_utc_now)
 
 
 class MilestoneGraph(BaseModel):

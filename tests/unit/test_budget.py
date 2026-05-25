@@ -10,8 +10,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from aidevswarm.tools.budget import DefaultTokenBudget
 from aidevswarm.settings import Settings
+from aidevswarm.tools.budget import DefaultTokenBudget
 
 
 class FakeTokenLog:
@@ -73,9 +73,13 @@ def test_daily_cap_blocks_spend() -> None:
     repo = FakeTokenLog()
     budget = DefaultTokenBudget(_settings(daily=200, milestone=10_000), repo)
     repo.record(
-        project_id=None, milestone_id=None,
-        role="ideation", model="claude-haiku-4-5",
-        input_tokens=150, output_tokens=0, cost_usd=0.0,
+        project_id=None,
+        milestone_id=None,
+        role="ideation",
+        model="claude-haiku-4-5",
+        input_tokens=150,
+        output_tokens=0,
+        cost_usd=0.0,
     )
     assert budget.can_spend(milestone_id=None, requested=100) is False
 
@@ -85,9 +89,13 @@ def test_per_milestone_cap_blocks_spend() -> None:
     budget = DefaultTokenBudget(_settings(daily=10_000, milestone=200), repo)
     ms = uuid4()
     repo.record(
-        project_id=None, milestone_id=ms,
-        role="build", model="claude-opus-4-7",
-        input_tokens=150, output_tokens=0, cost_usd=0.0,
+        project_id=None,
+        milestone_id=ms,
+        role="build",
+        model="claude-opus-4-7",
+        input_tokens=150,
+        output_tokens=0,
+        cost_usd=0.0,
     )
     assert budget.can_spend(milestone_id=ms, requested=100) is False
 
@@ -97,9 +105,13 @@ def test_per_milestone_cap_does_not_block_other_milestones() -> None:
     budget = DefaultTokenBudget(_settings(daily=10_000, milestone=200), repo)
     spent_ms, fresh_ms = uuid4(), uuid4()
     repo.record(
-        project_id=None, milestone_id=spent_ms,
-        role="build", model="claude-opus-4-7",
-        input_tokens=180, output_tokens=0, cost_usd=0.0,
+        project_id=None,
+        milestone_id=spent_ms,
+        role="build",
+        model="claude-opus-4-7",
+        input_tokens=180,
+        output_tokens=0,
+        cost_usd=0.0,
     )
     assert budget.can_spend(milestone_id=fresh_ms, requested=100) is True
 

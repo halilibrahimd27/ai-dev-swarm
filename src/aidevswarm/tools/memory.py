@@ -10,7 +10,6 @@ Phase 0 uses a single-conn psycopg3 path; Phase 1 switches to the pool.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, cast
 from uuid import UUID
 
 from aidevswarm.db.connection import open_connection
@@ -43,9 +42,7 @@ class PgvectorMemory:
             )
             conn.commit()
 
-    def is_duplicate(
-        self, embedding: Sequence[float], *, threshold: float = 0.92
-    ) -> bool:
+    def is_duplicate(self, embedding: Sequence[float], *, threshold: float = 0.92) -> bool:
         """True when any stored embedding is within ``1 - threshold`` cosine distance."""
         if not embedding:
             raise ValueError("embedding must be non-empty")
@@ -60,5 +57,5 @@ class PgvectorMemory:
                 """,
                 (_vector_literal(embedding), distance_cap),
             )
-            row = cast(tuple[Any, ...] | None, cur.fetchone())
+            row = cur.fetchone()
             return row is not None

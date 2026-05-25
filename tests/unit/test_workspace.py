@@ -20,9 +20,7 @@ def _git_available() -> bool:
     return shutil.which("git") is not None
 
 
-pytestmark = pytest.mark.skipif(
-    not _git_available(), reason="git binary not on PATH"
-)
+pytestmark = pytest.mark.skipif(not _git_available(), reason="git binary not on PATH")
 
 
 def test_init_is_idempotent(tmp_path: Path) -> None:
@@ -77,7 +75,5 @@ def test_workspace_manager_rejects_empty(tmp_path: Path) -> None:
 def test_git_log_has_initial_bootstrap_commit(tmp_path: Path) -> None:
     ws = Workspace(tmp_path / "delta")
     ws.init()
-    log = subprocess.check_output(
-        ["git", "log", "--oneline"], cwd=ws.root, text=True
-    )
+    log = subprocess.check_output(["git", "log", "--oneline"], cwd=ws.root, text=True)
     assert "workspace bootstrap" in log

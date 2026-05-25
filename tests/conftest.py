@@ -17,5 +17,8 @@ def _isolate_settings_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     """
     monkeypatch.chdir(tmp_path)
     for key in list(os.environ):
-        if key.startswith(("AIDEVSWARM_", "POSTGRES_", "TELEGRAM_", "GITHUB_")) or key == "ANTHROPIC_API_KEY":
+        if (
+            key.startswith(("AIDEVSWARM_", "POSTGRES_", "TELEGRAM_", "GITHUB_"))
+            or key == "ANTHROPIC_API_KEY"
+        ):
             monkeypatch.delenv(key, raising=False)

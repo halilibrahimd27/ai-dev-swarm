@@ -58,7 +58,7 @@ class DockerSandbox:
             self._image,
             "/usr/local/bin/run-ci.sh",
         ]
-        proc = subprocess.run(  # noqa: S603
+        proc = subprocess.run(
             cmd,
             check=False,
             capture_output=True,

@@ -27,17 +27,11 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr = Field(
         default=SecretStr(""), validation_alias="ANTHROPIC_API_KEY"
     )
-    model_strong: str = Field(
-        default="claude-opus-4-7", validation_alias="AIDEVSWARM_MODEL_STRONG"
-    )
-    model_fast: str = Field(
-        default="claude-haiku-4-5", validation_alias="AIDEVSWARM_MODEL_FAST"
-    )
+    model_strong: str = Field(default="claude-opus-4-7", validation_alias="AIDEVSWARM_MODEL_STRONG")
+    model_fast: str = Field(default="claude-haiku-4-5", validation_alias="AIDEVSWARM_MODEL_FAST")
 
     # --- GitHub -----------------------------------------------------------
-    github_token: SecretStr = Field(
-        default=SecretStr(""), validation_alias="GITHUB_TOKEN"
-    )
+    github_token: SecretStr = Field(default=SecretStr(""), validation_alias="GITHUB_TOKEN")
     github_owner: str = Field(default="", validation_alias="GITHUB_OWNER")
     github_mode: Literal["pr_only", "auto_merge"] = Field(
         default="pr_only", validation_alias="AIDEVSWARM_GITHUB_MODE"
@@ -69,15 +63,11 @@ class Settings(BaseSettings):
     per_milestone_token_budget: int = Field(
         default=400_000, validation_alias="AIDEVSWARM_PER_MILESTONE_TOKEN_BUDGET"
     )
-    build_concurrency: int = Field(
-        default=1, validation_alias="AIDEVSWARM_BUILD_CONCURRENCY"
-    )
+    build_concurrency: int = Field(default=1, validation_alias="AIDEVSWARM_BUILD_CONCURRENCY")
     milestone_retry_limit: int = Field(
         default=3, validation_alias="AIDEVSWARM_MILESTONE_RETRY_LIMIT"
     )
-    require_approval: bool = Field(
-        default=True, validation_alias="AIDEVSWARM_REQUIRE_APPROVAL"
-    )
+    require_approval: bool = Field(default=True, validation_alias="AIDEVSWARM_REQUIRE_APPROVAL")
     tick_seconds: int = Field(default=30, validation_alias="AIDEVSWARM_TICK_SECONDS")
 
     # --- Workspace --------------------------------------------------------

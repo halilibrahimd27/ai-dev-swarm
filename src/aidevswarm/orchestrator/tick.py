@@ -29,7 +29,6 @@ from aidevswarm.orchestrator.state_machine import (
 from aidevswarm.schemas import (
     MilestoneState,
     Project,
-    ProjectSpec,
     ProjectState,
 )
 from aidevswarm.settings import Settings
@@ -133,9 +132,7 @@ class Tick:
         )
 
         if not result.success:
-            self._d.milestone_repo.record_attempt(
-                milestone.id, success=False, commit_hash=None
-            )
+            self._d.milestone_repo.record_attempt(milestone.id, success=False, commit_hash=None)
             self._log.info(
                 "tick.milestone_failed",
                 project=project.name,
@@ -159,9 +156,7 @@ class Tick:
             commit_hash: str | None = commit.commit_hash
         else:
             commit_hash = result.commit_hash
-        self._d.milestone_repo.record_attempt(
-            milestone.id, success=True, commit_hash=commit_hash
-        )
+        self._d.milestone_repo.record_attempt(milestone.id, success=True, commit_hash=commit_hash)
         return project  # stay in BUILDING; next tick picks the next milestone
 
     def _integrate(self, project: Project) -> Project:
@@ -174,10 +169,8 @@ class Tick:
                     title=f"Initial release: {project.name}",
                     body=project.spec.summary,
                 )
-                self._d.telegram.send(
-                    f"[ai-dev-swarm] '{project.name}' shipped: {pr_url}"
-                )
-            except Exception as exc:  # noqa: BLE001
+                self._d.telegram.send(f"[ai-dev-swarm] '{project.name}' shipped: {pr_url}")
+            except Exception as exc:
                 self._log.warning("tick.publish_failed", error=str(exc))
         return self._move(project, ProjectState.DONE)
 

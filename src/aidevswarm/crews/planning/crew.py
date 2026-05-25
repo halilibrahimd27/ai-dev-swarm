@@ -29,7 +29,7 @@ class CrewaiPlanningCrew:
         self._arch_prompt = load_prompt(_CREW_DIR, "architect")
         self._crew_factory = self._build_crew
 
-    def _build_crew(self, spec: ProjectSpec) -> Any:  # noqa: ANN401
+    def _build_crew(self, spec: ProjectSpec) -> Any:
         from crewai import Agent, Crew, Process, Task
 
         pm = Agent(
@@ -81,7 +81,7 @@ class CrewaiPlanningCrew:
         return graph
 
     @staticmethod
-    def _parse(crew_output: Any) -> MilestoneGraph:  # noqa: ANN401
+    def _parse(crew_output: Any) -> MilestoneGraph:
         raw = getattr(crew_output, "raw", crew_output)
         data = json.loads(raw) if isinstance(raw, str) else raw
         return MilestoneGraph(

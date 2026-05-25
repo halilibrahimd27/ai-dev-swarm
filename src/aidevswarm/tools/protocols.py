@@ -41,9 +41,7 @@ class MemoryStore(Protocol):
     """pgvector-backed dedup memory for ideas."""
 
     def remember(self, project_id: UUID, embedding: Sequence[float]) -> None: ...
-    def is_duplicate(
-        self, embedding: Sequence[float], *, threshold: float = 0.92
-    ) -> bool: ...
+    def is_duplicate(self, embedding: Sequence[float], *, threshold: float = 0.92) -> bool: ...
 
 
 class Telegram(Protocol):
@@ -55,9 +53,7 @@ class Telegram(Protocol):
 class GitHubTool(Protocol):
     """Publishes finished projects to GitHub."""
 
-    def open_pr(
-        self, *, repo_url: str, branch: str, title: str, body: str
-    ) -> str: ...
+    def open_pr(self, *, repo_url: str, branch: str, title: str, body: str) -> str: ...
 
 
 class Sandbox(Protocol):

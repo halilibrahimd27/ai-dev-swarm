@@ -35,7 +35,7 @@ class CrewaiBuildCrew:
         self._tester_prompt = load_prompt(_CREW_DIR, "tester")
         self._reviewer_prompt = load_prompt(_CREW_DIR, "reviewer")
 
-    def _build_crew(self, milestone: Milestone, workspace: Workspace) -> Any:  # noqa: ANN401
+    def _build_crew(self, milestone: Milestone, workspace: Workspace) -> Any:
         from crewai import Agent, Crew, Process, Task
 
         developer = Agent(
@@ -71,9 +71,17 @@ class CrewaiBuildCrew:
         return Crew(
             agents=[developer, tester, reviewer],
             tasks=[
-                Task(description=ctx + "Implement the milestone.", expected_output="diff", agent=developer),
+                Task(
+                    description=ctx + "Implement the milestone.",
+                    expected_output="diff",
+                    agent=developer,
+                ),
                 Task(description=ctx + "Run the CI gate.", expected_output="ok|fail", agent=tester),
-                Task(description=ctx + "Approve and commit, or reject with fixes.", expected_output="JSON MilestoneBuildResult", agent=reviewer),
+                Task(
+                    description=ctx + "Approve and commit, or reject with fixes.",
+                    expected_output="JSON MilestoneBuildResult",
+                    agent=reviewer,
+                ),
             ],
             process=Process.sequential,
             verbose=False,
@@ -107,7 +115,7 @@ class CrewaiBuildCrew:
         return parsed
 
     @staticmethod
-    def _parse(crew_output: Any) -> MilestoneBuildResult:  # noqa: ANN401
+    def _parse(crew_output: Any) -> MilestoneBuildResult:
         raw = getattr(crew_output, "raw", crew_output)
         data = json.loads(raw) if isinstance(raw, str) else raw
         return MilestoneBuildResult.model_validate(data)

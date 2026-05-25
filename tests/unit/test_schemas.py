@@ -46,8 +46,8 @@ def test_milestone_state_values() -> None:
 
 
 def test_terminal_sets_are_subsets_of_their_enums() -> None:
-    assert TERMINAL_PROJECT_STATES <= set(ProjectState)
-    assert TERMINAL_MILESTONE_STATES <= set(MilestoneState)
+    assert set(ProjectState) >= TERMINAL_PROJECT_STATES
+    assert set(MilestoneState) >= TERMINAL_MILESTONE_STATES
 
 
 def _spec() -> ProjectSpec:

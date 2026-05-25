@@ -47,7 +47,7 @@ class Scheduler:
         while True:
             try:
                 await job.func()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self._log.warning("scheduler.job_error", job=job.name, error=str(exc))
             await asyncio.sleep(job.interval_seconds)
 
