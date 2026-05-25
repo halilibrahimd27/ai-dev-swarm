@@ -24,7 +24,7 @@ from aidevswarm.db.sessions import PsycopgMilestoneSessionRepo
 from aidevswarm.logging_config import configure_logging, get_logger
 from aidevswarm.observability import bootstrap_phoenix
 from aidevswarm.orchestrator.auto_split import AutoSplitPredictor
-from aidevswarm.orchestrator.scheduler import IntervalJob, Scheduler
+from aidevswarm.orchestrator.scheduler import IntervalJob, ProjectPool, Scheduler
 from aidevswarm.orchestrator.tick import Tick, TickDeps
 from aidevswarm.settings import Settings, load_settings
 from aidevswarm.tools import (
@@ -90,26 +90,29 @@ async def _async_main() -> None:
     bootstrap_phoenix(settings)
 
     tick = _build_tick(settings)
-
-    async def project_tick() -> None:
-        # The tick itself is synchronous; offload so the scheduler stays
-        # responsive even if a tick takes seconds (DB / network).
-        await asyncio.to_thread(tick.advance_one_step)
+    project_repo = tick._d.project_repo
 
     async def ideation_cron() -> None:
         log.info("ideation_cron.run")
         # Phase 0 leaves the ideation refill to operator-driven enqueues;
-        # the cron is wired so Phase 3+ can attach the full ideation flow
-        # without changing the scheduler topology.
+        # Phase 3+ may attach the full ideation flow without changing the
+        # scheduler topology.
 
     scheduler = Scheduler(
         jobs=[
-            IntervalJob("project_tick", float(settings.tick_seconds), project_tick),
             IntervalJob("ideation_cron", 60.0 * 60.0 * 24.0, ideation_cron),
         ]
     )
+    pool = ProjectPool(
+        tick=tick,
+        project_repo=project_repo,
+        concurrency=settings.build_concurrency,
+        poll_seconds=float(settings.tick_seconds),
+    )
     try:
-        await scheduler.run_forever()
+        # Both run_forever loops live in the same event loop; gather()
+        # propagates the first failure to the operator.
+        await asyncio.gather(scheduler.run_forever(), pool.run_forever())
     finally:
         close_pool()
 
