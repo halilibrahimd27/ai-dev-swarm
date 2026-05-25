@@ -8,9 +8,8 @@ already a Phase 0 dependency.
 
 from logging.config import fileConfig
 
-from sqlalchemy import URL, engine_from_config, pool
-
 from alembic import context
+from sqlalchemy import URL, engine_from_config, pool
 
 # Alembic Config object.
 config = context.config

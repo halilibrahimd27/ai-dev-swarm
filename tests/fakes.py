@@ -283,3 +283,41 @@ class FakeMemoryStore:
     def is_duplicate(self, embedding: Sequence[float], *, threshold: float = 0.92) -> bool:
         del embedding, threshold
         return False
+
+
+@dataclass
+class FakeSteeringRepo:
+    """In-memory :class:`aidevswarm.steering.protocols.SteeringRepo`.
+
+    Mirrors the production semantics: ``pull_unconsumed`` marks the
+    notes consumed in-place and returns each note exactly once for a
+    given (project, role) pair. Two pulls for the same role return
+    nothing on the second call.
+    """
+
+    rows: list[dict[str, object]] = field(default_factory=list)
+    _next_id: int = 1
+
+    def add_note(self, project_id: UUID, body: str, *, author: str = "human") -> int:
+        note_id = self._next_id
+        self._next_id += 1
+        self.rows.append(
+            {
+                "id": note_id,
+                "project_id": project_id,
+                "body": body,
+                "author": author,
+                "consumed_at": None,
+                "consumed_by": None,
+            }
+        )
+        return note_id
+
+    def pull_unconsumed(self, project_id: UUID, role: str) -> list[str]:
+        bodies: list[str] = []
+        for row in self.rows:
+            if row["project_id"] == project_id and row["consumed_at"] is None:
+                bodies.append(str(row["body"]))
+                row["consumed_at"] = "now"
+                row["consumed_by"] = role
+        return bodies
