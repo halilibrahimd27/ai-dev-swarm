@@ -1,16 +1,19 @@
-"""CrewAI-backed Build crew (one invocation per milestone).
+"""Build crew — Phase 2 shape.
 
-Phase 0 wires Developer / Tester / Reviewer agents to the milestone
-description and lets them collaborate via CrewAI's sequential process.
-Real code generation will live in the Developer agent's tool calls;
-Phase 2 replaces the Developer with a Claude Agent SDK tool.
+The Developer and Tester roles are now Claude Agent SDK invocations
+(:class:`ClaudeAgentSDKDeveloperTool` /
+:class:`ClaudeAgentSDKTesterTool`). There is no direct LLM call from
+either role — the SDK owns the conversation, the trace, and the
+session resume.
 
-The actual CI gate is delegated to the supplied :class:`Sandbox`
-instance — the build crew is NOT trusted to mark a milestone done on
-its own.
+The Reviewer stays as a single-turn CrewAI Agent that reads the diff +
+CI verdict and emits a ``MilestoneBuildResult`` JSON. The sandbox CI
+gate runs between Tester and Reviewer; if it fails, the Reviewer is
+skipped entirely and a failure result is returned.
 
-Steering notes are pulled per role just before kickoff so each milestone
-picks up whatever the operator has queued since the last build run.
+Steering notes are still per-role and pulled at the start of every
+SDK invocation (the SDK tools call ``SteeringRepo.pull_unconsumed``
+themselves); the Reviewer uses the Phase-1 renderer.
 """
 
 from __future__ import annotations
@@ -18,14 +21,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+
+from claude_agent_sdk.types import McpStdioServerConfig
 
 from aidevswarm.crews._prompts import load_prompt
+from aidevswarm.db.sessions import MilestoneSessionRepo
 from aidevswarm.logging_config import get_logger
 from aidevswarm.schemas import Milestone, MilestoneBuildResult
 from aidevswarm.settings import Settings
 from aidevswarm.steering import SteeringRepo, render_prompt
-from aidevswarm.tools import Sandbox, Workspace
+from aidevswarm.tools import Sandbox, SandboxResult, Workspace
+from aidevswarm.tools.claude_agent_sdk_tool import (
+    ClaudeAgentSDKDeveloperTool,
+    ClaudeAgentSDKTesterTool,
+    SDKResult,
+)
 
 _CREW_DIR = Path(__file__).resolve().parent
 
@@ -36,55 +46,75 @@ class CrewaiBuildCrew:
     def __init__(
         self,
         settings: Settings,
+        session_repo: MilestoneSessionRepo,
         *,
         steering_repo: SteeringRepo | None = None,
+        mcp_servers: dict[str, McpStdioServerConfig] | None = None,
     ) -> None:
         self._settings = settings
         self._log = get_logger(__name__)
         self._steering = steering_repo
-        self._developer_template = load_prompt(_CREW_DIR, "developer")
-        self._tester_template = load_prompt(_CREW_DIR, "tester")
         self._reviewer_template = load_prompt(_CREW_DIR, "reviewer")
+        self._dev_tool = ClaudeAgentSDKDeveloperTool(
+            settings, session_repo, steering_repo=steering_repo, mcp_servers=mcp_servers
+        )
+        self._tester_tool = ClaudeAgentSDKTesterTool(
+            settings, session_repo, steering_repo=steering_repo, mcp_servers=mcp_servers
+        )
 
-    def _pull(self, project_id: UUID, role: str) -> list[str]:
-        if self._steering is None:
-            return []
-        return self._steering.pull_unconsumed(project_id, role)
+    # ------------------------------------------------------------------
+    # Public entry
+    # ------------------------------------------------------------------
 
-    def _build_crew(self, milestone: Milestone, workspace: Workspace) -> Any:
+    def run(
+        self,
+        *,
+        milestone: Milestone,
+        workspace: Workspace,
+        sandbox: Sandbox,
+    ) -> MilestoneBuildResult:
+        dev = self._dev_tool.run_sync(milestone, workspace)
+        if not dev.success:
+            return _failure_from_sdk(dev, phase="developer")
+
+        tester = self._tester_tool.run_sync(milestone, workspace)
+        if not tester.success:
+            return _failure_from_sdk(tester, phase="tester")
+
+        ci = sandbox.run_ci(str(workspace.root))
+        if not ci.passed:
+            self._log.info("build.ci_failed", exit_code=ci.exit_code)
+            return _failure_from_ci(ci, dev=dev, tester=tester)
+
+        return self._review(milestone, workspace, dev, tester, ci)
+
+    # ------------------------------------------------------------------
+    # Reviewer (single-turn CrewAI agent)
+    # ------------------------------------------------------------------
+
+    def _review(
+        self,
+        milestone: Milestone,
+        workspace: Workspace,
+        dev: SDKResult,
+        tester: SDKResult,
+        ci: SandboxResult,
+    ) -> MilestoneBuildResult:
         from crewai import Agent, Crew, Process, Task
 
-        pid = milestone.project_id
-        dev_backstory = render_prompt(
-            self._developer_template, steering_notes=self._pull(pid, "Developer")
-        )
-        tester_backstory = render_prompt(
-            self._tester_template, steering_notes=self._pull(pid, "Tester")
-        )
-        reviewer_backstory = render_prompt(
-            self._reviewer_template, steering_notes=self._pull(pid, "Reviewer")
+        backstory = render_prompt(
+            self._reviewer_template,
+            steering_notes=(
+                self._steering.pull_unconsumed(milestone.project_id, "Reviewer")
+                if self._steering is not None
+                else []
+            ),
         )
 
-        developer = Agent(
-            role="Developer",
-            goal="Implement the milestone in the persistent workspace.",
-            backstory=dev_backstory,
-            llm=self._settings.model_strong,
-            verbose=False,
-            allow_delegation=False,
-        )
-        tester = Agent(
-            role="Tester",
-            goal="Write/expand tests and run the CI gate to verify.",
-            backstory=tester_backstory,
-            llm=self._settings.model_strong,
-            verbose=False,
-            allow_delegation=False,
-        )
         reviewer = Agent(
             role="Reviewer",
             goal="Approve only if acceptance criteria are genuinely met.",
-            backstory=reviewer_backstory,
+            backstory=backstory,
             llm=self._settings.model_strong,
             verbose=False,
             allow_delegation=False,
@@ -94,55 +124,65 @@ class CrewaiBuildCrew:
             f"WORKSPACE: {workspace.root}\n"
             f"MILESTONE: {milestone.title}\n"
             f"SPEC:\n{milestone.spec.model_dump_json(indent=2)}\n"
+            f"DEVELOPER: session={dev.session_id} cost=${dev.cost_usd:.4f} turns={dev.turns}\n"
+            f"TESTER:    session={tester.session_id} cost=${tester.cost_usd:.4f} turns={tester.turns}\n"
+            f"CI: exit={ci.exit_code} stdout_tail={ci.stdout[-200:]!r}\n"
         )
-        return Crew(
-            agents=[developer, tester, reviewer],
+        crew = Crew(
+            agents=[reviewer],
             tasks=[
                 Task(
-                    description=ctx + "Implement the milestone.",
-                    expected_output="diff",
-                    agent=developer,
-                ),
-                Task(description=ctx + "Run the CI gate.", expected_output="ok|fail", agent=tester),
-                Task(
-                    description=ctx + "Approve and commit, or reject with fixes.",
+                    description=ctx + "Approve and emit MilestoneBuildResult JSON, or reject with fixes.",
                     expected_output="JSON MilestoneBuildResult",
                     agent=reviewer,
-                ),
+                )
             ],
             process=Process.sequential,
             verbose=False,
         )
-
-    def run(
-        self,
-        *,
-        milestone: Milestone,
-        workspace: Workspace,
-        sandbox: Sandbox,
-    ) -> MilestoneBuildResult:
-        crew = self._build_crew(milestone, workspace)
         result = crew.kickoff()
+        return self._parse(result, fallback_tokens=dev.turns + tester.turns)
 
-        # The Reviewer is expected to emit MilestoneBuildResult JSON.
-        parsed = self._parse(result)
-
-        # Hard CI gate: regardless of what the crew claims, run the
-        # sandbox and refuse to mark success on failure.
-        ci = sandbox.run_ci(str(workspace.root))
-        if not ci.passed:
-            self._log.info("build.ci_failed", exit_code=ci.exit_code)
-            return MilestoneBuildResult(
-                success=False,
-                commit_hash=None,
-                summary="CI gate failed",
-                failure_reason=ci.stderr.strip()[:500],
-                tokens_used=parsed.tokens_used,
-            )
-        return parsed
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse(crew_output: Any) -> MilestoneBuildResult:
+    def _parse(crew_output: Any, *, fallback_tokens: int = 0) -> MilestoneBuildResult:
         raw = getattr(crew_output, "raw", crew_output)
         data = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(data, dict):
+            return MilestoneBuildResult(
+                success=False,
+                summary="reviewer did not return JSON",
+                failure_reason=f"reviewer returned: {data!r}"[:300],
+                tokens_used=fallback_tokens,
+            )
         return MilestoneBuildResult.model_validate(data)
+
+
+# ----------------------------------------------------------------------
+# Tiny helpers — testable in isolation
+# ----------------------------------------------------------------------
+
+
+def _failure_from_sdk(result: SDKResult, *, phase: str) -> MilestoneBuildResult:
+    return MilestoneBuildResult(
+        success=False,
+        commit_hash=None,
+        summary=f"{phase} SDK invocation failed",
+        failure_reason=(result.failure_reason or result.summary)[:500] or "unknown",
+        tokens_used=result.turns,
+    )
+
+
+def _failure_from_ci(
+    ci: SandboxResult, *, dev: SDKResult, tester: SDKResult
+) -> MilestoneBuildResult:
+    return MilestoneBuildResult(
+        success=False,
+        commit_hash=None,
+        summary="CI gate failed",
+        failure_reason=ci.stderr.strip()[:500] or f"exit_code={ci.exit_code}",
+        tokens_used=dev.turns + tester.turns,
+    )

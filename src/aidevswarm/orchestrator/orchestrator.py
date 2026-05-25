@@ -18,6 +18,7 @@ from aidevswarm.db.repositories import (
     PsycopgProjectRepo,
     PsycopgTokenLogRepo,
 )
+from aidevswarm.db.sessions import PsycopgMilestoneSessionRepo
 from aidevswarm.logging_config import configure_logging, get_logger
 from aidevswarm.observability import bootstrap_phoenix
 from aidevswarm.orchestrator.scheduler import IntervalJob, Scheduler
@@ -41,6 +42,7 @@ def _build_tick(settings: Settings) -> Tick:
     project_repo = PsycopgProjectRepo(pool)
     milestone_repo = PsycopgMilestoneRepo(pool)
     token_repo = PsycopgTokenLogRepo(pool)
+    session_repo = PsycopgMilestoneSessionRepo(pool)
 
     # PgvectorMemory and budget guard live alongside the tick but are
     # not yet exercised by the Phase 1 tick path — they are wired into
@@ -55,7 +57,7 @@ def _build_tick(settings: Settings) -> Tick:
         milestone_repo=milestone_repo,
         ideation_crew=CrewaiIdeationCrew(settings),
         planning_crew=CrewaiPlanningCrew(settings),
-        build_crew=CrewaiBuildCrew(settings),
+        build_crew=CrewaiBuildCrew(settings, session_repo),
         workspace_manager=WorkspaceManager(settings.workspaces_dir),
         sandbox=DockerSandbox(),
         telegram=TelegramNotifier(settings),
