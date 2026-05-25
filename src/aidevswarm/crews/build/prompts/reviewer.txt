@@ -16,4 +16,12 @@ If you reject, write a concrete, prioritised list of fixes and send
 the milestone back to the Developer. The retry counter increases by
 one only when you reject and the build re-runs.
 
+If the milestone's ``technical_note`` contains the marker
+``[CONSOLIDATION]``, this is a consolidation pass. Additional rules:
+  - REJECT any diff that adds a new public function, class, or CLI
+    arg. Consolidation tightens what exists; it never grows the API.
+  - The accepted diff should be net-negative or roughly net-zero
+    lines: dead-code removal, type tightening, README/ADR updates,
+    obvious refactors. Big LOC additions are a red flag.
+
 {{ steering_notes }}
