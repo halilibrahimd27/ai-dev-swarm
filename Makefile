@@ -10,7 +10,7 @@ COV_FAIL   ?= 85
 .PHONY: help install lint format typecheck test smoke up down logs ps clean \
         migrate migration \
         verify verify-l0 verify-l1 verify-l2 verify-l3 verify-l4 verify-l5 \
-        verify-l6 verify-l8
+        verify-l6 verify-l8 verify-ship
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z_-]+:.*?## / {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -104,3 +104,15 @@ verify-l6: ## L6 — xenon (radon) complexity caps.
 
 verify-l8: ## L8 — import-linter layered contract.
 	$(UV) run lint-imports --config ci/importlinter.ini
+
+# ----------------------------------------------------------------------------
+# Phase 6 — Ship-it acceptance gauntlet.
+#  * Refuses to pass if the build kit (CLAUDE.md, phase prompts, etc.)
+#    has accidentally been added to git.
+#  * Verifies LICENSE, THREAT_MODEL.md, SECURITY.md, ADRs are present.
+#  * Validates docker-compose.yml parses (no `up` — just structural check).
+#  * Asserts .env.example mentions every Settings env var.
+# ----------------------------------------------------------------------------
+
+verify-ship: ## Phase 6 — ship-it acceptance checks (no docker required).
+	@$(UV) run python ci/verify_ship.py

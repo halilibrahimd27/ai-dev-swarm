@@ -43,14 +43,22 @@ def test_pg_dsn_includes_password(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "password=topsecret" in dsn
 
 
-def test_api_host_loopback_only() -> None:
-    """Phase 5 invariant: the control plane never binds beyond loopback."""
+def test_api_host_loopback_or_zero() -> None:
+    """The validator allows loopback always + 0.0.0.0 inside containers.
+
+    The security guarantee for the docker-compose path comes from the
+    `127.0.0.1:8080:8080` publish line in docker-compose.yml, NOT from
+    uvicorn's bind address — see Phase 6 ADR / THREAT_MODEL. The
+    validator still refuses LAN IPs so a misconfigured `.env` on bare
+    metal can't accidentally expose the API.
+    """
     assert Settings(AIDEVSWARM_API_HOST="127.0.0.1").api_host == "127.0.0.1"
     assert Settings(AIDEVSWARM_API_HOST="localhost").api_host == "localhost"
-    with pytest.raises(ValidationError):
-        Settings(AIDEVSWARM_API_HOST="0.0.0.0")
+    assert Settings(AIDEVSWARM_API_HOST="0.0.0.0").api_host == "0.0.0.0"  # noqa: S104
     with pytest.raises(ValidationError):
         Settings(AIDEVSWARM_API_HOST="10.0.0.5")
+    with pytest.raises(ValidationError):
+        Settings(AIDEVSWARM_API_HOST="192.168.1.1")
 
 
 def test_telegram_allowed_user_ids_parses_csv() -> None:

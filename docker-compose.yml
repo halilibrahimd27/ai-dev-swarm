@@ -1,0 +1,17 @@
+# ai-dev-swarm — top-level Compose entry point.
+#
+# This file makes `docker compose up` from the repo root Just Work.
+# The actual service definitions live in docker/compose.yml; this
+# file `include:`s them so Phase 0-5 references to that path stay
+# valid.
+#
+# Operator commands:
+#   docker compose up -d            # start everything
+#   docker compose logs -f          # follow logs
+#   docker compose down             # stop everything
+#   docker compose down -v          # stop + wipe volumes (DESTRUCTIVE)
+#
+# Requires Docker Compose >= 2.20 (include: directive).
+
+include:
+  - docker/compose.yml

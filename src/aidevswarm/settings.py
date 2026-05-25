@@ -137,9 +137,17 @@ class Settings(BaseSettings):
     @field_validator("api_host")
     @classmethod
     def _enforce_loopback(cls, v: str) -> str:
-        if v not in {"127.0.0.1", "localhost"}:
+        # Inside a docker container, uvicorn must bind 0.0.0.0 so docker
+        # can publish the port — the security guarantee comes from the
+        # docker publish line `127.0.0.1:8080:8080` which binds only the
+        # host's loopback (see docker-compose.yml). Outside docker the
+        # operator should keep 127.0.0.1 to prevent LAN exposure.
+        allowed = {"127.0.0.1", "localhost", "0.0.0.0"}  # noqa: S104
+        if v not in allowed:
             raise ValueError(
-                f"AIDEVSWARM_API_HOST must be loopback (127.0.0.1 or localhost), got {v!r}"
+                f"AIDEVSWARM_API_HOST must be one of {sorted(allowed)} "
+                f"(loopback or 0.0.0.0 — the latter only inside a docker "
+                f"container that publishes ports to 127.0.0.1). Got {v!r}."
             )
         return v
 
