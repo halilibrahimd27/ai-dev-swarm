@@ -48,7 +48,10 @@ CREATE TABLE IF NOT EXISTS token_log (
 );
 
 CREATE INDEX IF NOT EXISTS token_log_project_idx ON token_log (project_id);
-CREATE INDEX IF NOT EXISTS token_log_day_idx     ON token_log ((created_at::date));
+-- Plain btree on the timestamptz; date-grouped queries can range-scan this
+-- index. A functional index on `created_at::date` is rejected because the
+-- timestamptz->date cast is not IMMUTABLE.
+CREATE INDEX IF NOT EXISTS token_log_created_idx ON token_log (created_at);
 
 -- Idea-level dedup memory (pgvector). 1536 dims = OpenAI / Anthropic
 -- v3-text-embedding compatible; adjust if a different model is used.
