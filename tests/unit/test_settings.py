@@ -54,7 +54,7 @@ def test_api_host_loopback_or_zero() -> None:
     """
     assert Settings(AIDEVSWARM_API_HOST="127.0.0.1").api_host == "127.0.0.1"
     assert Settings(AIDEVSWARM_API_HOST="localhost").api_host == "localhost"
-    assert Settings(AIDEVSWARM_API_HOST="0.0.0.0").api_host == "0.0.0.0"  # noqa: S104
+    assert Settings(AIDEVSWARM_API_HOST="0.0.0.0").api_host == "0.0.0.0"
     with pytest.raises(ValidationError):
         Settings(AIDEVSWARM_API_HOST="10.0.0.5")
     with pytest.raises(ValidationError):
