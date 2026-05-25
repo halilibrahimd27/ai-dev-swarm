@@ -70,9 +70,7 @@ def milestone_row(live_pool: ConnectionPool) -> Iterator[UUID]:
             cur.execute("DELETE FROM projects WHERE id = %s", (str(pid),))
 
 
-def test_record_then_latest_for_round_trip(
-    live_pool: ConnectionPool, milestone_row: UUID
-) -> None:
+def test_record_then_latest_for_round_trip(live_pool: ConnectionPool, milestone_row: UUID) -> None:
     repo = PsycopgMilestoneSessionRepo(live_pool)
     repo.record(
         milestone_id=milestone_row,
@@ -89,16 +87,10 @@ def test_record_then_latest_for_round_trip(
     assert latest.role == "Developer"
 
 
-def test_latest_for_returns_newest_row(
-    live_pool: ConnectionPool, milestone_row: UUID
-) -> None:
+def test_latest_for_returns_newest_row(live_pool: ConnectionPool, milestone_row: UUID) -> None:
     repo = PsycopgMilestoneSessionRepo(live_pool)
-    repo.record(
-        milestone_id=milestone_row, role="Tester", session_id="t1", cost_usd=0.1, turns=2
-    )
-    repo.record(
-        milestone_id=milestone_row, role="Tester", session_id="t2", cost_usd=0.2, turns=3
-    )
+    repo.record(milestone_id=milestone_row, role="Tester", session_id="t1", cost_usd=0.1, turns=2)
+    repo.record(milestone_id=milestone_row, role="Tester", session_id="t2", cost_usd=0.2, turns=3)
     latest = repo.latest_for(milestone_row, "Tester")
     assert latest is not None
     # Newest is whichever row has the greatest (finished_at, id); both

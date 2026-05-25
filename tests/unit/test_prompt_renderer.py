@@ -65,6 +65,14 @@ def test_unknown_template_variable_fails_strict() -> None:
         ("Developer", _CREW_ROOT / "build/prompts/developer.txt"),
         ("Tester", _CREW_ROOT / "build/prompts/tester.txt"),
         ("Reviewer", _CREW_ROOT / "build/prompts/reviewer.txt"),
+        (
+            "SDK Developer",
+            Path(__file__).resolve().parents[2] / "src/aidevswarm/tools/sdk_prompts/developer.txt",
+        ),
+        (
+            "SDK Tester",
+            Path(__file__).resolve().parents[2] / "src/aidevswarm/tools/sdk_prompts/tester.txt",
+        ),
     ],
 )
 def test_every_role_prompt_has_the_slot(role: str, prompt_path: Path) -> None:

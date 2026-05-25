@@ -6,5 +6,6 @@ every CrewAI agent via OpenInference instrumentation.
 """
 
 from aidevswarm.observability.phoenix import bootstrap_phoenix
+from aidevswarm.observability.tracing import get_tracer
 
-__all__ = ["bootstrap_phoenix"]
+__all__ = ["bootstrap_phoenix", "get_tracer"]

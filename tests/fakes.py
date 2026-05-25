@@ -313,9 +313,7 @@ class FakeMilestoneSessionRepo:
         return row
 
     def latest_for(self, milestone_id: UUID, role: str) -> MilestoneSession | None:
-        candidates = [
-            r for r in self.rows if r.milestone_id == milestone_id and r.role == role
-        ]
+        candidates = [r for r in self.rows if r.milestone_id == milestone_id and r.role == role]
         if not candidates:
             return None
         return max(candidates, key=lambda r: r.finished_at)
