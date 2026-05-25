@@ -1,0 +1,79 @@
+{
+  "project": {
+    "name": "cli-port-finder",
+    "spec": {
+      "title": "cli-port-finder",
+      "summary": "A small CLI that finds free TCP ports on a host with rich filtering (range, family, IPv6, reserved-port skip) and a Hypothesis-tested core.",
+      "rationale": "Operators frequently need a reproducible 'give me a free port' primitive that survives macOS ephemeral-range quirks, docker bridge conflicts, and IPv6-only stacks. Existing tools (`lsof`, `ss`, `netcat -z`) don't compose well into scripts.",
+      "stack": ["python", "click", "hypothesis"],
+      "tags": ["systems", "networking", "cli"],
+      "score": 84
+    }
+  },
+  "milestones": [
+    {
+      "title": "core port-probe primitive",
+      "description": "Pure-Python function `probe(host, port, family) -> bool` that returns True iff the port is bindable RIGHT NOW. Uses socket.socket(family).bind() under a context manager; releases immediately.",
+      "acceptance_criteria": [
+        {
+          "description": "probe() returns True for a port we just bound + released, False for a port still bound by a fixture socket",
+          "verifier": "pytest"
+        },
+        {
+          "description": "Hypothesis property test: for any port in [1024, 65535], probe() agrees with a real bind attempt on the same address",
+          "verifier": "pytest"
+        }
+      ],
+      "technical_note": "No subprocess calls — pure socket API. Skip reserved ports < 1024 unless --include-privileged is passed."
+    },
+    {
+      "title": "CLI surface + click integration",
+      "description": "`cli-port-finder [--range LO HI] [--family v4|v6|any] [--first|--list] [--reserved-ok]` — Click app that wraps the core. Exits 0 with the chosen port; exit 1 if none found in the range.",
+      "acceptance_criteria": [
+        {
+          "description": "`--first` prints exactly one port and exits 0 when at least one is free",
+          "verifier": "pytest"
+        },
+        {
+          "description": "`--list --range 5000 5005` prints all free ports in the range, one per line",
+          "verifier": "pytest"
+        },
+        {
+          "description": "Exit code is 1 when no port in the range is free (mocked by binding every port in a fixture)",
+          "verifier": "pytest"
+        }
+      ],
+      "technical_note": "Use `click.testing.CliRunner` for the test surface — no real network in tests."
+    },
+    {
+      "title": "IPv6 + dual-stack handling",
+      "description": "Extend probe() + the CLI to handle IPv6-only hosts and dual-stack systems where v4 and v6 ports are NOT symmetric.",
+      "acceptance_criteria": [
+        {
+          "description": "On a dual-stack host, --family v6 returns ports the v4 sweep would not have caught",
+          "verifier": "pytest"
+        },
+        {
+          "description": "Hypothesis: bound a v4 port; v6 probe of the same port number is independent (passes iff the OS supports IPV6_V6ONLY)",
+          "verifier": "pytest"
+        }
+      ],
+      "technical_note": "Set IPV6_V6ONLY=1 on v6 sockets so the dual-stack bridge behaviour is deterministic across Linux/macOS."
+    },
+    {
+      "title": "[CONSOLIDATION] tidy + verify pass",
+      "description": "No new public API. Improve test coverage in `tests/property/`, add a CLI integration test, ensure `make verify` runs clean.",
+      "acceptance_criteria": [
+        {
+          "description": "make verify passes on a clean checkout",
+          "verifier": "make"
+        },
+        {
+          "description": "No new symbols in __all__ vs the previous milestone",
+          "verifier": "grep"
+        }
+      ],
+      "technical_note": "[CONSOLIDATION] — REJECT any new feature additions in this milestone."
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "project": {
+    "name": "markdown-toc",
+    "spec": {
+      "title": "markdown-toc",
+      "summary": "A standalone Markdown table-of-contents generator that walks ATX + Setext headings, handles GitHub's slug rules (incl. duplicate-heading suffixes), and round-trips with an existing TOC block (no double-insertion).",
+      "rationale": "Existing TOC generators (markdown-toc, doctoc) are old, npm-only, and don't match GitHub's slugify rules exactly. A modern Python implementation with property tests against the real GitHub renderer would be useful in CI for docs-heavy repos.",
+      "stack": ["python", "rich", "hypothesis"],
+      "tags": ["docs", "cli", "markdown"],
+      "score": 81
+    }
+  },
+  "milestones": [
+    {
+      "title": "heading parser (ATX + Setext)",
+      "description": "Pure function `parse_headings(text) -> list[Heading]` that returns level + raw text + line number for every ATX (`#`-prefixed) and Setext (underline-style) heading.",
+      "acceptance_criteria": [
+        {
+          "description": "ATX h1-h6 all parsed with correct level",
+          "verifier": "pytest"
+        },
+        {
+          "description": "Setext h1 + h2 parsed; --- under text becomes level=2",
+          "verifier": "pytest"
+        },
+        {
+          "description": "Headings inside fenced code blocks are IGNORED (hypothesis property)",
+          "verifier": "pytest"
+        }
+      ],
+      "technical_note": "Single-pass scanner; no markdown library — we want explicit behaviour, not someone else's."
+    },
+    {
+      "title": "GitHub slugify",
+      "description": "`slugify(text, seen: set[str]) -> str` that matches GitHub's rules: lowercase, spaces→`-`, drop most punctuation, keep emoji codepoints, append `-1`/`-2`/... suffix for duplicates.",
+      "acceptance_criteria": [
+        {
+          "description": "Property test against a curated fixture of (markdown heading -> expected GitHub anchor) pairs",
+          "verifier": "pytest"
+        },
+        {
+          "description": "Duplicate-heading suffix matches GitHub's `-1`/`-2` convention",
+          "verifier": "pytest"
+        }
+      ],
+      "technical_note": "GitHub renderer is THE reference. Don't reimplement gfm-rules; encode the observed behaviour in a fixture table."
+    },
+    {
+      "title": "TOC renderer + idempotent insert",
+      "description": "`render_toc(headings) -> str` + `update_or_insert(text) -> str` that finds an existing `<!-- TOC -->` ... `<!-- /TOC -->` block and replaces it (or inserts after the first H1 if absent).",
+      "acceptance_criteria": [
+        {
+          "description": "Running `markdown-toc README.md` twice produces an identical file the second time",
+          "verifier": "pytest"
+        },
+        {
+          "description": "CLI exits 1 if there's no H1 AND no TOC marker (told you so)",
+          "verifier": "pytest"
+        }
+      ],
+      "technical_note": "Idempotency is the load-bearing property — CI hooks run this on every commit."
+    },
+    {
+      "title": "[CONSOLIDATION] tidy + verify pass",
+      "description": "No new public API. Tighten the slugify fixture, add a property test that `slugify(s, seen)` is deterministic given identical input + seen.",
+      "acceptance_criteria": [
+        {
+          "description": "make verify passes on a clean checkout",
+          "verifier": "make"
+        }
+      ],
+      "technical_note": "[CONSOLIDATION] — REJECT any new feature additions in this milestone."
+    }
+  ]
+}
