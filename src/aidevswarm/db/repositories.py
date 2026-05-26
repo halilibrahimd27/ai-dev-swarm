@@ -102,6 +102,12 @@ class PsycopgProjectRepo:
             row = cur.fetchone()
             return _project_from_row(row) if row else None
 
+    def list_all(self) -> list[Project]:
+        """Return every project row, newest first."""
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT * FROM projects ORDER BY created_at DESC")
+            return [_project_from_row(r) for r in cur.fetchall()]
+
     def list_by_state(self, state: ProjectState) -> list[Project]:
         with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM projects WHERE state = %s", (state.value,))

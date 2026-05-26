@@ -161,16 +161,8 @@ def build_app(
 
 
 def _collect_projects(project_repo: ProjectRepo) -> list[Project]:
-    """Best-effort listing — uses the ``rows``-shaped iterator if present."""
-    rows = getattr(project_repo, "rows", None)
-    if rows is not None:
-        return list(rows.values())
-    # Real psycopg-backed repos don't expose `rows`; the orchestrator
-    # is going to extend ProjectRepo with `list_all()` if we need
-    # production fidelity. For Phase 5 the in-memory fakes used by
-    # tests + the docker compose stack via the rows attribute are
-    # sufficient.
-    return []
+    """Return all projects via the typed ProjectRepo.list_all() method."""
+    return project_repo.list_all()
 
 
 def _fetch_project(

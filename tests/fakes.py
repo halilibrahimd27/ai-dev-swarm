@@ -60,6 +60,9 @@ class InMemoryProjectRepo:
                 return project
         return None
 
+    def list_all(self) -> list[Project]:
+        return list(self.rows.values())
+
     def list_by_state(self, state: ProjectState) -> list[Project]:
         return [p for p in self.rows.values() if p.state == state]
 
