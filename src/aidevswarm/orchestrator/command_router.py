@@ -19,7 +19,8 @@ confirmation step.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from aidevswarm.db.protocols import ProjectRepo
@@ -29,6 +30,7 @@ from aidevswarm.schemas import (
     Approve,
     Command,
     DropAndStartNew,
+    IdeateNow,
     InjectNote,
     KillSwitch,
     ListState,
@@ -67,6 +69,12 @@ class CommandRouter:
     project_repo: ProjectRepo
     steering_repo: SteeringRepo
     kill_switch: KillSwitchProto
+    # Phase 6 operator-triggered ideation. Fire-and-forget: the
+    # router only schedules the work, doesn't block the dispatch.
+    # If unset (defaults to a no-op), `ideate_now` returns a soft
+    # error so the UI shows "wiring not available" rather than
+    # silently swallowing the request.
+    ideate_runner: Callable[[], None] = field(default=lambda: None)
 
     def __post_init__(self) -> None:
         self._log = get_logger(__name__)
@@ -96,6 +104,7 @@ class CommandRouter:
             InjectNote: self._inject_note,
             PauseProject: self._pause,
             ResumeProject: self._resume,
+            IdeateNow: self._ideate_now,
             AbortProject: self._abort,
             Rescope: self._rescope,
             TransformProject: self._transform,
@@ -160,6 +169,24 @@ class CommandRouter:
             ok=True,
             intent=_cmd.intent,
             detail="see /sse/transcript/{project_id}",
+        )
+
+    def _ideate_now(self, cmd: IdeateNow) -> CommandResult:
+        """Fire-and-forget: schedule the ideation crew + return at once."""
+        try:
+            self.ideate_runner()
+        except Exception as exc:
+            self._log.warning("router.ideate_now_failed", error=str(exc))
+            return CommandResult(
+                ok=False,
+                intent=cmd.intent,
+                detail=f"ideate_now scheduling failed: {exc}",
+            )
+        self._log.info("router.ideate_now_scheduled")
+        return CommandResult(
+            ok=True,
+            intent=cmd.intent,
+            detail="ideation crew scheduled (watch transcript / Phoenix)",
         )
 
     # ------------------------------------------------------------------

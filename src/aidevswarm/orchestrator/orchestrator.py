@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 from aidevswarm.api import build_app, run_server
 from aidevswarm.crews import CrewaiBuildCrew, CrewaiIdeationCrew, CrewaiPlanningCrew
@@ -109,10 +110,12 @@ async def _async_main() -> None:
     bridge.attach(asyncio.get_running_loop())
     bridge.install_crewai_handlers()
     redactor = SecretRedactor(settings.redact_patterns)
+    loop = asyncio.get_running_loop()
     router = CommandRouter(
         project_repo=project_repo,
         steering_repo=steering_repo,
         kill_switch=tick._d.kill_switch,
+        ideate_runner=lambda: (loop.create_task(_run_ideation_once(tick, log)), None)[1],
     )
     api_app = build_app(
         settings=settings,
@@ -151,6 +154,53 @@ async def _async_main() -> None:
         )
     finally:
         close_pool()
+
+
+async def _run_ideation_once(tick: Tick, log: Any) -> None:
+    """Run the ideation crew once + queue the winning idea, if any.
+
+    Operator-triggered via the Phase 6 ``ideate_now`` Command. The LLM
+    call lives on a worker thread (``asyncio.to_thread``) so it doesn't
+    block the orchestrator event loop. We just log on every outcome —
+    the operator watches the result land in the projects pane.
+    """
+    log.info("ideation.run.started")
+    try:
+        ideas = await asyncio.to_thread(tick._d.ideation_crew.run)
+    except Exception as exc:
+        log.warning("ideation.run.failed", error=str(exc))
+        return
+    if not ideas:
+        log.info("ideation.run.no_ideas")
+        return
+    best = max(ideas, key=lambda s: s.total)
+    from aidevswarm.schemas import Project, ProjectSpec
+
+    project = Project(
+        name=_idea_slug(best.idea.title),
+        spec=ProjectSpec(
+            title=best.idea.title,
+            summary=best.idea.summary,
+            rationale=best.idea.rationale,
+            stack=list(best.idea.stack),
+            tags=list(best.idea.tags),
+            score=int(best.total),
+        ),
+    )
+    await asyncio.to_thread(tick._d.project_repo.create, project)
+    log.info(
+        "ideation.run.queued",
+        project=project.name,
+        score=int(best.total),
+        title=best.idea.title,
+    )
+
+
+def _idea_slug(title: str) -> str:
+    """URL-safe, repo-friendly project name from an idea title."""
+    cleaned = "".join(c.lower() if c.isalnum() else "-" for c in title)
+    cleaned = "-".join(part for part in cleaned.split("-") if part)
+    return cleaned[:48] or "idea"
 
 
 def main() -> None:

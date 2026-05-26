@@ -37,8 +37,17 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr = Field(
         default=SecretStr(""), validation_alias="ANTHROPIC_API_KEY"
     )
-    model_strong: str = Field(default="claude-opus-4-7", validation_alias="AIDEVSWARM_MODEL_STRONG")
-    model_fast: str = Field(default="claude-haiku-4-5", validation_alias="AIDEVSWARM_MODEL_FAST")
+    # NOTE: LiteLLM (the model router CrewAI uses) needs the `anthropic/`
+    # prefix to route through the Anthropic Messages API; otherwise it
+    # falls through to OpenAI and demands OPENAI_API_KEY.
+    model_strong: str = Field(
+        default="anthropic/claude-opus-4-7",
+        validation_alias="AIDEVSWARM_MODEL_STRONG",
+    )
+    model_fast: str = Field(
+        default="anthropic/claude-haiku-4-5",
+        validation_alias="AIDEVSWARM_MODEL_FAST",
+    )
 
     # --- GitHub -----------------------------------------------------------
     github_token: SecretStr = Field(default=SecretStr(""), validation_alias="GITHUB_TOKEN")

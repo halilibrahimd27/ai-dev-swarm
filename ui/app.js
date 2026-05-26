@@ -23,6 +23,10 @@
     subscribeProjectsStream();
     bindControls();
     bindSteerForm();
+    // Belt-and-braces: SSE may miss the ideation-landed event because
+    // the ideation crew runs off-loop. Poll the projects list every
+    // 5 seconds so the state pane catches new rows either way.
+    setInterval(loadProjects, 5000);
   });
 
   // ------------------------------------------------------------------
@@ -141,6 +145,8 @@
 
   function buildCommandPayload(intent) {
     switch (intent) {
+      case "ideate_now":
+        return { intent };
       case "approve":
       case "pause_project":
       case "resume_project":

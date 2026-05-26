@@ -75,6 +75,20 @@ class ShowTranscript(_Base):
     limit: int = Field(default=50, ge=1, le=500)
 
 
+class IdeateNow(_Base):
+    """Fire the ideation crew once on demand.
+
+    Phase 6 operator path — the Phase-0 `ideation_cron` only fires
+    every 24h. This command runs the crew immediately; if any
+    candidate beats the Critic's threshold, it lands as a queued
+    project (then the scheduler picks it up). Non-blocking: the
+    actual LLM call runs in a background task; the dispatcher
+    returns at once.
+    """
+
+    intent: Literal["ideate_now"] = "ideate_now"
+
+
 # ---------------------------------------------------------------------------
 # Lifecycle (non-destructive but visible)
 # ---------------------------------------------------------------------------
@@ -169,6 +183,7 @@ Command = Annotated[
     | InjectNote
     | ListState
     | ShowTranscript
+    | IdeateNow
     | PauseProject
     | ResumeProject
     | AbortProject

@@ -17,6 +17,7 @@ from aidevswarm.schemas import (
     AbortProject,
     Approve,
     DropAndStartNew,
+    IdeateNow,
     InjectNote,
     KillSwitch,
     ListState,
@@ -201,4 +202,35 @@ def test_confirmed_reject_idea_is_a_log_only_acknowledgement() -> None:
     """No DB yet for ideas — Phase 5 keeps this best-effort."""
     router, _, _, _ = _make_router()
     result = router.dispatch(RejectIdea(idea_id=uuid4(), confirmed=True))
+    assert result.ok
+
+
+def test_ideate_now_calls_the_runner_and_returns_quickly() -> None:
+    """The Phase-6 operator-triggered ideation fires + returns at once."""
+    fired: list[int] = []
+    router, _, _, _ = _make_router()
+    router.ideate_runner = lambda: fired.append(1)
+    result = router.dispatch(IdeateNow())
+    assert result.ok
+    assert fired == [1]
+    assert "scheduled" in result.detail
+
+
+def test_ideate_now_returns_soft_error_when_runner_raises() -> None:
+    """Runner errors must NOT crash the dispatcher — soft failure instead."""
+
+    def boom() -> None:
+        raise RuntimeError("ideation crew not wired in this build")
+
+    router, _, _, _ = _make_router()
+    router.ideate_runner = boom
+    result = router.dispatch(IdeateNow())
+    assert result.ok is False
+    assert "scheduling failed" in result.detail
+
+
+def test_ideate_now_default_runner_is_a_safe_noop() -> None:
+    """Without an injected runner the dispatcher still returns ok=True."""
+    router, _, _, _ = _make_router()  # uses default no-op runner
+    result = router.dispatch(IdeateNow())
     assert result.ok
