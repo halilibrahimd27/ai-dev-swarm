@@ -163,7 +163,32 @@ class ProjectPool:
                 project=project.name,
                 state=project.state.value,
             )
-            updated = await asyncio.to_thread(self._tick.advance_project, project)
+            try:
+                updated = await asyncio.to_thread(self._tick.advance_project, project)
+            except Exception as exc:
+                # One crashing crew (parser, LLM, anything) MUST NOT take
+                # down the whole orchestrator — that's the crash-loop the
+                # operator hit on day 1. Park the project as BLOCKED so
+                # the pool stops picking it up, and the operator can
+                # rescope or abort via the web panel.
+                self._log.warning(
+                    "project_pool.advance_failed",
+                    worker=worker_id,
+                    project=project.name,
+                    state=project.state.value,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+                try:
+                    self._repo.update_state(project.id, ProjectState.BLOCKED)
+                except Exception as inner:
+                    # Even the safety-net move can race; log + continue.
+                    self._log.error(
+                        "project_pool.block_failed",
+                        project=project.name,
+                        error=str(inner),
+                    )
+                return True
             if updated is not None and updated.state in TERMINAL_PROJECT_STATES:
                 self._log.info(
                     "project_pool.terminal",

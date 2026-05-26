@@ -99,14 +99,47 @@ class CrewaiPlanningCrew:
     def run(self, project_id: UUID, spec: ProjectSpec) -> MilestoneGraph:
         crew = self._build_crew(project_id, spec)
         result = crew.kickoff()
-        graph = self._parse(result)
+        specs = self._parse_specs(result, self._log)
+        if not specs:
+            # MilestoneGraph requires >= 1 milestone; an empty list +
+            # advancing the project would also be misleading. Raise a
+            # named ValueError instead — the project pool's safety-net
+            # catches this and moves the project to BLOCKED so the
+            # operator can rescope or abort via the web panel.
+            raise ValueError("planning crew produced zero parseable milestones")
+        graph = MilestoneGraph(milestones=specs)
         self._log.info("planning.done", milestones=len(graph.milestones))
         return graph
 
     @staticmethod
-    def _parse(crew_output: Any) -> MilestoneGraph:
+    def _parse_specs(crew_output: Any, log: Any | None = None) -> list[MilestoneSpec]:
+        """Tolerant parse: malformed entries are skipped with a warning.
+
+        CrewAI's Architect occasionally returns truncated or trailing-
+        garbage JSON — one bad milestone must NOT crash the orchestrator.
+        Returns whatever IS parseable; the caller decides whether an
+        empty list is fatal.
+        """
         raw = getattr(crew_output, "raw", crew_output)
-        data = json.loads(raw) if isinstance(raw, str) else raw
-        return MilestoneGraph(
-            milestones=[MilestoneSpec.model_validate(m) for m in data.get("milestones", [])]
-        )
+        try:
+            data = json.loads(raw) if isinstance(raw, str) else raw
+        except json.JSONDecodeError as exc:
+            if log is not None:
+                log.warning(
+                    "planning.parse.json_error",
+                    error=str(exc),
+                    raw_head=str(raw)[:200] if raw else "",
+                )
+            return []
+        out: list[MilestoneSpec] = []
+        for entry in data.get("milestones", []) if isinstance(data, dict) else []:
+            try:
+                out.append(MilestoneSpec.model_validate(entry))
+            except Exception as exc:
+                if log is not None:
+                    log.warning(
+                        "planning.parse.skip_entry",
+                        error=str(exc),
+                        entry=str(entry)[:200],
+                    )
+        return out
