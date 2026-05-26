@@ -80,13 +80,35 @@ class CrewaiIdeationCrew:
             agent=scout,
         )
         ideator_task = Task(
-            description="Propose one project per candidate space.",
-            expected_output="JSON list of Idea objects.",
+            description=(
+                "Propose ONE project per candidate space. Output a JSON list "
+                "where each entry has fields: title (string), summary (string), "
+                "rationale (string), stack (list[string]), tags (list[string])."
+            ),
+            expected_output=(
+                'JSON list, e.g. [{"title":"...","summary":"...",'
+                '"rationale":"...","stack":["python"],"tags":["cli"]}, ...]'
+            ),
             agent=ideator,
         )
         critic_task = Task(
-            description="Score every idea per the rubric.",
-            expected_output="JSON list of ScoredIdea objects.",
+            description=(
+                "Score every idea per the rubric. Output JSON ONLY, no prose. "
+                "The OUTER value is a JSON list. Each entry MUST have:\n"
+                '  - "idea": the FULL Idea object (title/summary/rationale/'
+                "stack/tags) — NOT a bare title string\n"
+                '  - "scores": {"depth_ambition": int 0-100, "usefulness_niche": '
+                'int, "novelty": int, "decomposability": int, "buildability": int}\n'
+                '  - "total": int 0-100 (weighted score)\n'
+                '  - "rejected_reason": string OR null'
+            ),
+            expected_output=(
+                'A JSON list, e.g. [{"idea":{"title":"...","summary":"...",'
+                '"rationale":"...","stack":["python"],"tags":["x"]},'
+                '"scores":{"depth_ambition":85,"usefulness_niche":80,'
+                '"novelty":75,"decomposability":85,"buildability":80},'
+                '"total":81,"rejected_reason":null}]'
+            ),
             agent=critic,
         )
 
@@ -133,19 +155,35 @@ class CrewaiIdeationCrew:
 
     @staticmethod
     def _parse(crew_output: Any) -> list[ScoredIdea]:
-        """Be liberal in what we accept from CrewAI's loose output type."""
+        """Be liberal in what we accept from CrewAI's loose output type.
+
+        Malformed entries (e.g. ``idea`` returned as a bare title string
+        instead of the full Idea dict) are SKIPPED with a warning, not
+        a crash — one bad entry must not take down the whole ideation
+        pass.
+        """
         import json
 
         raw = getattr(crew_output, "raw", crew_output)
         data = json.loads(raw) if isinstance(raw, str) else raw
         if not isinstance(data, list):
             raise ValueError("Critic did not return a JSON list")
-        return [
-            ScoredIdea(
-                idea=Idea.model_validate(entry["idea"]),
-                scores=CriticScores.model_validate(entry["scores"]),
-                total=int(entry["total"]),
-                rejected_reason=entry.get("rejected_reason"),
-            )
-            for entry in data
-        ]
+        out: list[ScoredIdea] = []
+        log = get_logger(__name__)
+        for entry in data:
+            try:
+                out.append(
+                    ScoredIdea(
+                        idea=Idea.model_validate(entry["idea"]),
+                        scores=CriticScores.model_validate(entry["scores"]),
+                        total=int(entry["total"]),
+                        rejected_reason=entry.get("rejected_reason"),
+                    )
+                )
+            except Exception as exc:
+                log.warning(
+                    "ideation.parse.skip_entry",
+                    error=str(exc),
+                    entry=str(entry)[:200],
+                )
+        return out

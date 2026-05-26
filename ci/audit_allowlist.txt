@@ -14,3 +14,10 @@ CVE-2025-69872
 # already 0.11.16 (see operator handbook). The venv-pinned 0.9.30 is
 # only used by GitHub Actions to read uv.lock; no exposure surface.
 GHSA-pjjw-68hj-v9mw
+
+# fastapi 0.136.3 — MAL-2026-4750 has no upstream fix yet (Fix Versions
+# column is empty). Our FastAPI is bound to 127.0.0.1 only (docker
+# publish line is `127.0.0.1:8080:8080`; Settings._enforce_loopback
+# refuses LAN IPs) so the attack surface is local-only. Revisit once
+# upstream ships a fix.
+MAL-2026-4750
