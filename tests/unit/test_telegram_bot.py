@@ -9,7 +9,6 @@ parsing) are pure logic and tested here with hand-rolled fakes.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -104,15 +103,20 @@ async def test_echo_for_confirmation_sends_yes_no_keyboard() -> None:
     text = args[0]
     keyboard = kwargs["reply_markup"]
     assert "abort_project" in text
-    # The Yes button carries the JSON payload so the callback can re-dispatch.
+    # callback_data must stay within Telegram's 64-byte cap: the button
+    # carries a SHORT token, and the command is stashed server-side.
     yes_btn = keyboard.inline_keyboard[0][0]
     no_btn = keyboard.inline_keyboard[0][1]
     assert yes_btn.text == "Yes"
     assert no_btn.text == "No"
     assert yes_btn.callback_data.startswith("yes:")
-    payload = json.loads(yes_btn.callback_data[len("yes:") :])
-    assert payload["intent"] == "abort_project"
-    assert str(payload["project_id"]) == str(project_id)
+    assert len(yes_btn.callback_data.encode("utf-8")) <= 64
+    token = yes_btn.callback_data[len("yes:") :]
+    assert no_btn.callback_data == f"no:{token}"
+    assert token in bot._pending
+    stashed = bot._pending[token]
+    assert stashed.intent == "abort_project"
+    assert str(stashed.project_id) == str(project_id)  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio
@@ -170,15 +174,19 @@ async def test_callback_yes_dispatches_confirmed() -> None:
         )
     )
     project = next(iter(bot.router.project_repo.rows.values()))  # type: ignore[attr-defined]
-    payload = json.dumps({"intent": "abort_project", "project_id": str(project.id)})
+    # Stash the pending command as _echo_for_confirmation would, then tap Yes.
+    token = uuid4().hex
+    bot._pending[token] = AbortProject(project_id=project.id)
     update = MagicMock()
     update.effective_user.id = 1
-    update.callback_query.data = "yes:" + payload
+    update.callback_query.data = "yes:" + token
     update.callback_query.answer = AsyncMock()
     update.callback_query.edit_message_text = AsyncMock()
     await bot._on_callback(update, MagicMock())
     # The kill switch should now be tripped for this project.
     assert bot.router.kill_switch.is_tripped_for(project.id)  # type: ignore[attr-defined]
+    # The token is consumed (one-shot).
+    assert token not in bot._pending
 
 
 @pytest.mark.asyncio
@@ -305,17 +313,18 @@ async def test_cmd_kill_echoes_for_confirmation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_callback_yes_with_invalid_json_responds_gracefully() -> None:
+async def test_callback_yes_with_unknown_token_responds_gracefully() -> None:
+    """A Yes tap for a token we don't have (restart / double-tap) is handled."""
     bot = _bot(allowed=[1])
     update = MagicMock()
     update.effective_user.id = 1
-    update.callback_query.data = "yes:not-json"
+    update.callback_query.data = "yes:deadbeefdeadbeefdeadbeefdeadbeef"
     update.callback_query.answer = AsyncMock()
     update.callback_query.edit_message_text = AsyncMock()
     await bot._on_callback(update, MagicMock())
     update.callback_query.edit_message_text.assert_awaited_once()
     text = update.callback_query.edit_message_text.call_args[0][0]
-    assert "invalid" in text
+    assert "expired" in text
 
 
 # Suppress unused import warnings for objects only used inside the

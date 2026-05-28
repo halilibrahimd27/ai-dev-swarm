@@ -12,7 +12,12 @@ trivial sandbox image).
 
 from __future__ import annotations
 
+import os
+import stat
 import subprocess
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,7 +34,7 @@ class CommitResult:
     message: str
 
 
-def _run_git(cwd: Path, *args: str) -> str:
+def _run_git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str:
     """Run ``git <args>`` in ``cwd`` and return stdout (stripped)."""
     proc = subprocess.run(
         ["git", *args],
@@ -37,6 +42,7 @@ def _run_git(cwd: Path, *args: str) -> str:
         check=False,
         capture_output=True,
         text=True,
+        env=env,
     )
     if proc.returncode != 0:
         raise GitError(
@@ -44,6 +50,30 @@ def _run_git(cwd: Path, *args: str) -> str:
             f"rc={proc.returncode} stderr={proc.stderr.strip()}"
         )
     return proc.stdout.strip()
+
+
+@contextmanager
+def _askpass_env(token: str) -> Iterator[dict[str, str]]:
+    """Yield an env that feeds ``token`` to git as the HTTPS password.
+
+    Writes a throwaway 0600 ``GIT_ASKPASS`` script that just echoes the
+    token from the environment. The token never touches argv or
+    ``.git/config``; the script body contains no secret. Both are torn
+    down on exit.
+    """
+    fd, path = tempfile.mkstemp(prefix="aidevswarm-askpass-", suffix=".sh")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write('#!/bin/sh\nprintf %s "$AIDEVSWARM_GIT_TOKEN"\n')
+        os.chmod(path, stat.S_IRWXU)  # 0700 — owner-only
+        env = dict(os.environ)
+        env["GIT_ASKPASS"] = path
+        env["AIDEVSWARM_GIT_TOKEN"] = token
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        yield env
+    finally:
+        with suppress(OSError):
+            os.unlink(path)
 
 
 class Workspace:
@@ -105,6 +135,43 @@ class Workspace:
     def commit_count(self) -> int:
         out = _run_git(self._root, "rev-list", "--count", "HEAD")
         return int(out)
+
+    # ------------------------------------------------------------------
+    # Remote / push
+    # ------------------------------------------------------------------
+
+    def has_remote(self, name: str = "origin") -> bool:
+        try:
+            remotes = _run_git(self._root, "remote")
+        except GitError:
+            return False
+        return name in remotes.split()
+
+    def set_remote(self, url: str, *, name: str = "origin") -> None:
+        """Point ``origin`` at ``url`` (idempotent).
+
+        ``url`` must NOT contain a token — supply credentials at push
+        time via :meth:`push`. We never persist a secret in
+        ``.git/config``.
+        """
+        if self.has_remote(name):
+            _run_git(self._root, "remote", "set-url", name, url)
+        else:
+            _run_git(self._root, "remote", "add", name, url)
+
+    def push(self, branch: str = "main", *, token: str | None = None, name: str = "origin") -> None:
+        """Push ``branch`` to ``origin``.
+
+        When ``token`` is given, it is fed to git via a one-shot
+        ``GIT_ASKPASS`` helper (the token lives only in this process's
+        env + a 0600 temp script that echoes it), so it never appears in
+        argv, ``.git/config``, or any error message.
+        """
+        if token:
+            with _askpass_env(token) as env:
+                _run_git(self._root, "push", "-u", name, branch, env=env)
+        else:
+            _run_git(self._root, "push", "-u", name, branch)
 
 
 class WorkspaceManager:

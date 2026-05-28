@@ -412,6 +412,33 @@ class PsycopgTokenLogRepo:
             row = cur.fetchone()
             return int(row[0]) if row and row[0] is not None else 0
 
+    def daily_cost_usd(self) -> float:
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(cost_usd), 0)
+                FROM token_log
+                WHERE created_at::date = (now() AT TIME ZONE 'UTC')::date
+                """
+            )
+            row = cur.fetchone()
+            return float(row[0]) if row and row[0] is not None else 0.0
+
+    def daily_by_role(self) -> list[tuple[str, int, float]]:
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT role,
+                       COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens,
+                       COALESCE(SUM(cost_usd), 0) AS cost
+                FROM token_log
+                WHERE created_at::date = (now() AT TIME ZONE 'UTC')::date
+                GROUP BY role
+                ORDER BY cost DESC
+                """
+            )
+            return [(str(r[0]), int(r[1]), float(r[2])) for r in cur.fetchall()]
+
 
 __all__ = [
     "PsycopgMilestoneRepo",

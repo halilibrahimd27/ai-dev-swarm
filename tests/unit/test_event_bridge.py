@@ -17,6 +17,19 @@ import pytest
 from aidevswarm.observability import EventBridge, TranscriptEntry
 
 
+def test_transcript_entry_coerces_none_text_to_empty() -> None:
+    """A CrewAI event with no task name (text=None) must not raise.
+
+    Regression: the _task_started handler passed None and the entry
+    failed validation inside the event-bus handler, dropping the entry.
+    """
+    entry = TranscriptEntry(topic="transcript", kind="task_start", text=None)  # type: ignore[arg-type]
+    assert entry.text == ""
+    # Non-str is coerced too.
+    entry2 = TranscriptEntry(topic="metrics", kind="llm_done", text=123)  # type: ignore[arg-type]
+    assert entry2.text == "123"
+
+
 @pytest.mark.asyncio
 async def test_publish_reaches_a_matching_subscriber() -> None:
     bridge = EventBridge()

@@ -8,6 +8,7 @@ Telegram.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
@@ -53,8 +54,26 @@ class Telegram(Protocol):
     def send(self, message: str) -> None: ...
 
 
+@dataclass(frozen=True)
+class CreatedRepo:
+    """A freshly-created GitHub repository.
+
+    ``push_remote`` carries the credential-less remote URL
+    (``https://x-access-token@github.com/<full_name>.git``) — the token
+    is supplied at push time via ``GIT_ASKPASS`` so it never lands in
+    ``.git/config``, argv, or logs.
+    """
+
+    full_name: str
+    html_url: str
+    push_remote: str
+
+
 class GitHubTool(Protocol):
     """Publishes finished projects to GitHub."""
+
+    def create_repo(self, *, name: str, description: str = "", private: bool = True) -> CreatedRepo:
+        """Create a repo for the project; return its coordinates."""
 
     def open_pr(self, *, repo_url: str, branch: str, title: str, body: str) -> str: ...
 

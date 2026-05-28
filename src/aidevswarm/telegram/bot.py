@@ -23,9 +23,8 @@ import contextlib
 import json
 from dataclasses import dataclass
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from pydantic import TypeAdapter, ValidationError
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
@@ -49,8 +48,6 @@ from aidevswarm.schemas import (
 from aidevswarm.settings import Settings
 from aidevswarm.telegram.intent import HaikuIntentParser, IntentParseError
 
-_COMMAND_ADAPTER: TypeAdapter[Command] = TypeAdapter(Command)
-
 
 @dataclass
 class TelegramBot:
@@ -64,6 +61,11 @@ class TelegramBot:
     def __post_init__(self) -> None:
         self._log = get_logger(__name__)
         self._app: Application | None = None  # type: ignore[type-arg]
+        # Pending destructive commands awaiting a [Yes][No] tap, keyed by
+        # a short token. Telegram caps callback_data at 64 bytes, so we
+        # CANNOT round-trip the full command JSON through the button —
+        # we stash it here and pass only the token.
+        self._pending: dict[str, Command] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -176,7 +178,7 @@ class TelegramBot:
         if query is None or not query.data:
             return
         await query.answer()
-        # Callback data: "approve:<id>" / "drop:<id>" / "yes:<json>" / "no".
+        # Callback data: "approve:<id>" / "drop:<id>" / "yes:<token>" / "no:<token>".
         prefix, _sep, payload = query.data.partition(":")
         handler = self._callback_handlers().get(prefix)
         if handler is not None:
@@ -190,23 +192,20 @@ class TelegramBot:
             "drop": self._cb_drop,
         }
 
-    async def _cb_no(self, query: Any, _payload: str) -> None:
+    async def _cb_no(self, query: Any, payload: str) -> None:
+        self._pending.pop(payload, None)
         await self._reply_via_query(query, "cancelled.")
 
     async def _cb_yes(self, query: Any, payload: str) -> None:
-        try:
-            raw = json.loads(payload)
-        except json.JSONDecodeError:
-            await self._reply_via_query(query, "invalid confirm payload")
+        command = self._pending.pop(payload, None)
+        if command is None:
+            await self._reply_via_query(
+                query, "this confirmation expired — please re-issue the command"
+            )
             return
-        raw["confirmed"] = True
-        try:
-            command = _COMMAND_ADAPTER.validate_python(raw)
-        except ValidationError:
-            await self._reply_via_query(query, "invalid confirm payload schema")
-            return
-        result = self.router.dispatch(command)
-        await self._reply_via_query(query, self.redactor(f"{command.intent}: {result.detail}"))
+        confirmed = command.model_copy(update={"confirmed": True})
+        result = self.router.dispatch(confirmed)
+        await self._reply_via_query(query, self.redactor(f"{confirmed.intent}: {result.detail}"))
 
     async def _cb_approve(self, query: Any, payload: str) -> None:
         try:
@@ -231,17 +230,23 @@ class TelegramBot:
         await self._reply(update, self.redactor(f"{command.intent}: {result.detail}"))
 
     async def _echo_for_confirmation(self, update: Update, command: Command) -> None:
-        """Send the parsed command back with a [Yes][No] inline keyboard."""
-        payload = json.dumps(command.model_dump(mode="json"))
+        """Send the parsed command back with a [Yes][No] inline keyboard.
+
+        The command is stashed under a short token; only the token rides
+        in ``callback_data`` (Telegram's 64-byte cap can't fit the JSON).
+        """
+        token = uuid4().hex
+        self._pending[token] = command
         keyboard = InlineKeyboardMarkup(
             [
                 [
-                    InlineKeyboardButton("Yes", callback_data=f"yes:{payload}"),
-                    InlineKeyboardButton("No", callback_data="no"),
+                    InlineKeyboardButton("Yes", callback_data=f"yes:{token}"),
+                    InlineKeyboardButton("No", callback_data=f"no:{token}"),
                 ]
             ]
         )
-        text = self.redactor(f"I understood: **{command.intent}**\n```\n{payload}\n```\nConfirm?")
+        pretty = json.dumps(command.model_dump(mode="json"))
+        text = self.redactor(f"I understood: **{command.intent}**\n```\n{pretty}\n```\nConfirm?")
         if update.message is not None:
             await update.message.reply_text(text, reply_markup=keyboard)
 

@@ -16,6 +16,7 @@ from uuid import UUID
 
 from pydantic import TypeAdapter
 
+from aidevswarm.crews._spend import record_crew_spend
 from aidevswarm.logging_config import get_logger
 from aidevswarm.schemas import (
     Milestone,
@@ -26,6 +27,7 @@ from aidevswarm.schemas import (
 )
 from aidevswarm.settings import Settings
 from aidevswarm.steering import SteeringRepo, render_prompt
+from aidevswarm.tools import SpendRecorder
 
 _CREW_DIR = Path(__file__).resolve().parent
 _ADAPTER: TypeAdapter[ReplannerAction] = TypeAdapter(ReplannerAction)
@@ -43,10 +45,12 @@ class CrewaiReplanningCrew:
         settings: Settings,
         *,
         steering_repo: SteeringRepo | None = None,
+        recorder: SpendRecorder | None = None,
     ) -> None:
         self._settings = settings
         self._log = get_logger(__name__)
         self._steering = steering_repo
+        self._recorder = recorder
         self._architect_template = _load("architect")
         self._pm_template = _load("pm")
 
@@ -64,6 +68,8 @@ class CrewaiReplanningCrew:
     ) -> ReplannerAction:
         from crewai import Agent, Crew, Process, Task
 
+        from aidevswarm.crews._llm import make_llm
+
         architect_backstory = render_prompt(
             self._architect_template,
             steering_notes=self._pull(project.id, "Architect"),
@@ -72,12 +78,13 @@ class CrewaiReplanningCrew:
             self._pm_template,
             steering_notes=self._pull(project.id, "PM"),
         )
+        strong_llm = make_llm(self._settings.model_strong, self._settings.max_output_tokens)
 
         architect = Agent(
             role="Replanner Architect",
             goal="Pick the right ReplannerAction for the upcoming milestone.",
             backstory=architect_backstory,
-            llm=self._settings.model_strong,
+            llm=strong_llm,
             verbose=False,
             allow_delegation=False,
         )
@@ -85,7 +92,7 @@ class CrewaiReplanningCrew:
             role="Replanner PM",
             goal="Help the Architect decide; own scope-shape decisions.",
             backstory=pm_backstory,
-            llm=self._settings.model_strong,
+            llm=strong_llm,
             verbose=False,
             allow_delegation=False,
         )
@@ -121,6 +128,14 @@ class CrewaiReplanningCrew:
             self._log.warning("replanner.crew_failed", error=str(exc))
             return Noop()
 
+        record_crew_spend(
+            self._recorder,
+            result,
+            project_id=project.id,
+            milestone_id=next_milestone.id,
+            role="replanner",
+            model=self._settings.model_strong,
+        )
         return self._parse(result)
 
     @staticmethod

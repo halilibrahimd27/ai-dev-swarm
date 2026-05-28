@@ -37,7 +37,7 @@ from aidevswarm.schemas import (
 )
 from aidevswarm.settings import Settings
 from aidevswarm.tools.kill_switch import InMemoryKillSwitch
-from tests.fakes import InMemoryMilestoneRepo, InMemoryProjectRepo
+from tests.fakes import InMemoryMilestoneRepo, InMemoryProjectRepo, InMemoryTokenLogRepo
 
 pytestmark = pytest.mark.integration
 
@@ -197,6 +197,60 @@ def test_redactor_wrapping_an_event_strips_secrets() -> None:
     payload = redactor(leaky.model_dump_json())
     assert "sk-ant-aaaaa" not in payload
     assert "[REDACTED:anthropic]" in payload
+
+
+def test_spend_endpoint_without_repo_returns_zeros() -> None:
+    app, *_ = _build()
+    with TestClient(app) as client:
+        response = client.get("/api/spend")
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {"daily_tokens": 0, "daily_cost_usd": 0.0, "by_role": []}
+
+
+def test_spend_endpoint_reports_per_role_breakdown() -> None:
+    settings = Settings(AIDEVSWARM_API_HOST="127.0.0.1", AIDEVSWARM_API_PORT=18080)
+    token_repo = InMemoryTokenLogRepo()
+    token_repo.record(
+        project_id=None,
+        milestone_id=None,
+        role="Developer",
+        model="anthropic/claude-opus-4-7",
+        input_tokens=1000,
+        output_tokens=500,
+        cost_usd=0.30,
+    )
+    token_repo.record(
+        project_id=None,
+        milestone_id=None,
+        role="Tester",
+        model="anthropic/claude-haiku-4-5",
+        input_tokens=2000,
+        output_tokens=200,
+        cost_usd=0.01,
+    )
+    app = build_app(
+        settings=settings,
+        project_repo=InMemoryProjectRepo(),
+        milestone_repo=InMemoryMilestoneRepo(),
+        bridge=EventBridge(),
+        router=CommandRouter(
+            project_repo=InMemoryProjectRepo(),
+            steering_repo=_FakeSteeringRepo(),
+            kill_switch=InMemoryKillSwitch(),
+        ),
+        redactor=SecretRedactor(settings.redact_patterns),
+        token_repo=token_repo,
+    )
+    with TestClient(app) as client:
+        response = client.get("/api/spend")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["daily_tokens"] == 3700
+    assert body["daily_cost_usd"] == 0.31
+    # Most-expensive role first.
+    assert body["by_role"][0]["role"] == "Developer"
+    assert body["by_role"][0]["cost_usd"] == 0.30
 
 
 def test_static_ui_mounted_when_directory_exists(tmp_path: Path) -> None:

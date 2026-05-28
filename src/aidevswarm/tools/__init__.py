@@ -1,10 +1,17 @@
 """Supporting tool implementations + their Protocols."""
 
-from aidevswarm.tools.budget import BudgetExceeded, DefaultTokenBudget
+from aidevswarm.tools.budget import (
+    BudgetExceeded,
+    DefaultTokenBudget,
+    SpendRecorder,
+    UnlimitedTokenBudget,
+    estimate_cost_usd,
+)
 from aidevswarm.tools.github_tool import GitHubError, GitHubPublisher, NullGitHub
 from aidevswarm.tools.kill_switch import InMemoryKillSwitch, RedisKillSwitch
 from aidevswarm.tools.memory import PgvectorMemory
 from aidevswarm.tools.protocols import (
+    CreatedRepo,
     GitHubTool,
     KillSwitch,
     MemoryStore,
@@ -25,6 +32,7 @@ from aidevswarm.tools.workspace import (
 __all__ = [
     "BudgetExceeded",
     "CommitResult",
+    "CreatedRepo",
     "DefaultTokenBudget",
     "DockerSandbox",
     "GitError",
@@ -42,9 +50,12 @@ __all__ = [
     "Sandbox",
     "SandboxResult",
     "SandboxRun",
+    "SpendRecorder",
     "Telegram",
     "TelegramNotifier",
     "TokenBudget",
+    "UnlimitedTokenBudget",
     "Workspace",
     "WorkspaceManager",
+    "estimate_cost_usd",
 ]

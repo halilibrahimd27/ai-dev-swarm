@@ -39,7 +39,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aidevswarm._time import utc_now
 from aidevswarm.logging_config import get_logger
@@ -67,6 +67,16 @@ class TranscriptEntry(BaseModel):
     text: str = ""
     extra: dict[str, Any] = Field(default_factory=dict)
     at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def _coerce_text(cls, v: object) -> str:
+        # CrewAI events sometimes hand us None (e.g. a task with no name)
+        # or a non-str; never let that raise inside an event-bus handler
+        # and silently drop the transcript entry.
+        if v is None:
+            return ""
+        return v if isinstance(v, str) else str(v)
 
 
 class EventBridge:

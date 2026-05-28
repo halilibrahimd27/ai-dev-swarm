@@ -156,6 +156,7 @@ class ProjectPool:
         project = await self._claim_next()
         if project is None:
             return False
+        advanced = False
         try:
             self._log.debug(
                 "project_pool.advance",
@@ -189,6 +190,11 @@ class ProjectPool:
                         error=str(inner),
                     )
                 return True
+            # `updated is None` means the tick deliberately did NOT advance
+            # (kill switch, awaiting approval, or a daily-budget pause).
+            # Report idle so the worker backs off `poll_seconds` instead of
+            # busy-spinning on the same project.
+            advanced = updated is not None
             if updated is not None and updated.state in TERMINAL_PROJECT_STATES:
                 self._log.info(
                     "project_pool.terminal",
@@ -198,7 +204,7 @@ class ProjectPool:
         finally:
             async with self._claim_lock:
                 self._claimed.discard(project.id)
-        return True
+        return advanced
 
     async def _claim_next(self) -> Project | None:
         """Atomically pick the oldest advanceable project not yet claimed."""

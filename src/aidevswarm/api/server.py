@@ -40,7 +40,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import TypeAdapter, ValidationError
 from sse_starlette.sse import EventSourceResponse
 
-from aidevswarm.db.protocols import MilestoneRepo, ProjectRepo
+from aidevswarm.db.protocols import MilestoneRepo, ProjectRepo, TokenLogRepo
 from aidevswarm.logging_config import get_logger
 from aidevswarm.observability import EventBridge, SecretRedactor, Topic
 from aidevswarm.orchestrator.command_router import CommandResult, CommandRouter
@@ -58,6 +58,7 @@ def build_app(
     bridge: EventBridge,
     router: CommandRouter,
     redactor: SecretRedactor,
+    token_repo: TokenLogRepo | None = None,
     ui_dir: Path | None = None,
 ) -> FastAPI:
     """Wire a FastAPI application with all Phase 5 dependencies.
@@ -104,6 +105,23 @@ def build_app(
             "milestones": [m.model_dump(mode="json") for m in milestones],
         }
         return body
+
+    # ------------------------------------------------------------------
+    # REST: spend visibility ("where did my money go today?")
+    # ------------------------------------------------------------------
+
+    @app.get("/api/spend")
+    async def spend() -> dict[str, Any]:
+        if token_repo is None:
+            return {"daily_tokens": 0, "daily_cost_usd": 0.0, "by_role": []}
+        tokens, cost, by_role = await asyncio.to_thread(_collect_spend, token_repo)
+        return {
+            "daily_tokens": tokens,
+            "daily_cost_usd": round(cost, 4),
+            "by_role": [
+                {"role": role, "tokens": t, "cost_usd": round(c, 4)} for role, t, c in by_role
+            ],
+        }
 
     # ------------------------------------------------------------------
     # REST: commands (shared with Telegram)
@@ -163,6 +181,15 @@ def build_app(
 def _collect_projects(project_repo: ProjectRepo) -> list[Project]:
     """Return all projects via the typed ProjectRepo.list_all() method."""
     return project_repo.list_all()
+
+
+def _collect_spend(token_repo: TokenLogRepo) -> tuple[int, float, list[tuple[str, int, float]]]:
+    """Today's token total, cost, and per-role breakdown (one DB round-trip set)."""
+    return (
+        token_repo.daily_total_tokens(),
+        token_repo.daily_cost_usd(),
+        token_repo.daily_by_role(),
+    )
 
 
 def _fetch_project(

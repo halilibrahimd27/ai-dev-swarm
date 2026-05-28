@@ -40,6 +40,7 @@ from aidevswarm.observability import get_tracer
 from aidevswarm.schemas import Milestone
 from aidevswarm.settings import Settings
 from aidevswarm.steering import SteeringRepo, render_prompt
+from aidevswarm.tools.budget import SpendRecorder
 from aidevswarm.tools.workspace import Workspace
 
 _SDK_PROMPT_DIR = Path(__file__).resolve().parent / "sdk_prompts"
@@ -68,6 +69,12 @@ class ClaudeAgentSDKTool:
     allowed_tools: ClassVar[tuple[str, ...]] = ()
     _template_name: ClassVar[str] = ""
 
+    # Model tier: "strong" (Opus, default) or "fast" (Haiku). Per
+    # ARCHITECTURE §7 the cheap model handles testing, the strong model
+    # does the building. Subclasses override; resolved against Settings
+    # in :meth:`_model` so the operator can repoint either tier via env.
+    model_tier: ClassVar[str] = "strong"
+
     # Defaults; per-call override via run_sync(max_turns=..., max_budget_usd=...).
     default_max_turns: ClassVar[int] = 40
     default_max_budget_usd: ClassVar[float] = 2.0
@@ -79,11 +86,13 @@ class ClaudeAgentSDKTool:
         *,
         steering_repo: SteeringRepo | None = None,
         mcp_servers: dict[str, McpStdioServerConfig] | None = None,
+        recorder: SpendRecorder | None = None,
     ) -> None:
         self._settings = settings
         self._session_repo = session_repo
         self._steering = steering_repo
         self._mcp_servers: dict[str, McpStdioServerConfig] = mcp_servers or {}
+        self._recorder = recorder
         self._log = get_logger(__name__)
         self._template = (_SDK_PROMPT_DIR / f"{self._template_name}.txt").read_text("utf-8")
 
@@ -107,6 +116,12 @@ class ClaudeAgentSDKTool:
                 max_turns=max_turns or self.default_max_turns,
                 max_budget_usd=max_budget_usd or self.default_max_budget_usd,
             )
+        )
+
+    def _model(self) -> str:
+        """Resolve this role's model from its tier (see :attr:`model_tier`)."""
+        return (
+            self._settings.model_fast if self.model_tier == "fast" else self._settings.model_strong
         )
 
     # ------------------------------------------------------------------
@@ -138,7 +153,7 @@ class ClaudeAgentSDKTool:
             max_turns=max_turns,
             max_budget_usd=max_budget_usd,
             resume=resume,
-            model=self._settings.model_strong,
+            model=self._model(),
             mcp_servers=dict(self._mcp_servers),
             hooks=self._build_hooks(milestone.project_id),
         )
@@ -218,7 +233,7 @@ class ClaudeAgentSDKTool:
             span.set_attribute("aidevswarm.project_id", str(milestone.project_id))
             span.set_attribute("aidevswarm.milestone_id", str(milestone.id))
             span.set_attribute("aidevswarm.role", self.role)
-            span.set_attribute("aidevswarm.model", self._settings.model_strong)
+            span.set_attribute("aidevswarm.model", self._model())
             if resume is not None:
                 span.set_attribute("aidevswarm.resume_session_id", resume)
 
@@ -254,8 +269,33 @@ class ClaudeAgentSDKTool:
                 cost_usd=float(final.total_cost_usd or 0.0),
                 turns=int(final.num_turns),
             )
-
+            self._ledger_spend(milestone, final)
             return _result_from(final)
+
+    def _ledger_spend(self, milestone: Milestone, final: ResultMessage) -> None:
+        """Record the SDK call's spend for the budget guard + UI visibility.
+
+        The SDK reports an exact ``total_cost_usd``; token counts come
+        from ``usage`` (cache reads counted toward input so the throttle
+        sees real throughput). No-op when no recorder is wired.
+        """
+        if self._recorder is None:
+            return
+        usage = final.usage or {}
+        prompt_tokens = (
+            int(usage.get("input_tokens", 0) or 0)
+            + int(usage.get("cache_read_input_tokens", 0) or 0)
+            + int(usage.get("cache_creation_input_tokens", 0) or 0)
+        )
+        self._recorder.record(
+            project_id=milestone.project_id,
+            milestone_id=milestone.id,
+            role=self.role,
+            model=self._model(),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=int(usage.get("output_tokens", 0) or 0),
+            cost_usd=float(final.total_cost_usd or 0.0),
+        )
 
     # ------------------------------------------------------------------
     # Helpers
@@ -279,6 +319,11 @@ class ClaudeAgentSDKTesterTool(ClaudeAgentSDKTool):
     """Tester role: writes Hypothesis property tests."""
 
     role = "Tester"
+    # ARCHITECTURE §7: the cheap model handles testing. The Tester runs
+    # on EVERY milestone, so routing it to Haiku is a recurring saver;
+    # repoint via AIDEVSWARM_MODEL_FAST if test quality needs the strong
+    # model.
+    model_tier = "fast"
     # Bash is namespace-restricted so the Tester can run pytest but
     # not arbitrary shell.
     allowed_tools = ("Read", "Write", "Edit", "Glob", "Grep", "Bash(pytest:*)")

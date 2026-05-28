@@ -12,11 +12,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from aidevswarm.crews._parsing import keep_known, loads_lenient
 from aidevswarm.crews._prompts import load_prompt
+from aidevswarm.crews._spend import record_crew_spend
 from aidevswarm.crews.ideation.novelty import NoveltyChecker
 from aidevswarm.logging_config import get_logger
 from aidevswarm.schemas import CriticScores, Idea, ScoredIdea
 from aidevswarm.settings import Settings
+from aidevswarm.tools import SpendRecorder
 
 _CREW_DIR = Path(__file__).resolve().parent
 
@@ -29,10 +32,12 @@ class CrewaiIdeationCrew:
         settings: Settings,
         *,
         novelty_checker: NoveltyChecker | None = None,
+        recorder: SpendRecorder | None = None,
     ) -> None:
         self._settings = settings
         self._log = get_logger(__name__)
         self._novelty = novelty_checker
+        self._recorder = recorder
         # Ideation runs BEFORE there's a project, so there's no
         # project-scoped SteeringRepo to pull from. The {{ steering_notes }}
         # slot in each template is rendered to an empty string here.
@@ -49,11 +54,17 @@ class CrewaiIdeationCrew:
     def _build_crew(self) -> Any:
         from crewai import Agent, Crew, Process, Task  # local import
 
+        from aidevswarm.crews._llm import make_llm
+
+        max_out = self._settings.max_output_tokens
+        fast_llm = make_llm(self._settings.model_fast, max_out)
+        strong_llm = make_llm(self._settings.model_strong, max_out)
+
         scout = Agent(
             role="Trend Scout",
             goal="Find deep, niche, multi-day problem spaces.",
             backstory=self._scout_prompt,
-            llm=self._settings.model_fast,
+            llm=fast_llm,
             verbose=False,
             allow_delegation=False,
         )
@@ -61,7 +72,7 @@ class CrewaiIdeationCrew:
             role="Ideator",
             goal="Turn problem spaces into concrete senior-level projects.",
             backstory=self._ideator_prompt,
-            llm=self._settings.model_strong,
+            llm=strong_llm,
             verbose=False,
             allow_delegation=False,
         )
@@ -69,7 +80,7 @@ class CrewaiIdeationCrew:
             role="Critic",
             goal="Score and gate ideas against the depth rubric.",
             backstory=self._critic_prompt,
-            llm=self._settings.model_strong,
+            llm=strong_llm,
             verbose=False,
             allow_delegation=False,
         )
@@ -124,6 +135,14 @@ class CrewaiIdeationCrew:
         if self._crew is None:
             self._crew = self._build_crew()
         result = self._crew.kickoff()
+        record_crew_spend(
+            self._recorder,
+            result,
+            project_id=None,
+            milestone_id=None,
+            role="ideation",
+            model=self._settings.model_strong,
+        )
         parsed = self._parse(result)
         if self._novelty is not None:
             parsed = [self._apply_novelty(s) for s in parsed]
@@ -162,10 +181,8 @@ class CrewaiIdeationCrew:
         a crash — one bad entry must not take down the whole ideation
         pass.
         """
-        import json
-
         raw = getattr(crew_output, "raw", crew_output)
-        data = json.loads(raw) if isinstance(raw, str) else raw
+        data = loads_lenient(raw)
         if not isinstance(data, list):
             raise ValueError("Critic did not return a JSON list")
         out: list[ScoredIdea] = []
@@ -174,8 +191,10 @@ class CrewaiIdeationCrew:
             try:
                 out.append(
                     ScoredIdea(
-                        idea=Idea.model_validate(entry["idea"]),
-                        scores=CriticScores.model_validate(entry["scores"]),
+                        idea=Idea.model_validate(keep_known(Idea, entry["idea"])),
+                        scores=CriticScores.model_validate(
+                            keep_known(CriticScores, entry["scores"])
+                        ),
                         total=int(entry["total"]),
                         rejected_reason=entry.get("rejected_reason"),
                     )

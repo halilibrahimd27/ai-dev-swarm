@@ -227,6 +227,22 @@ class InMemoryTokenLogRepo:
             if r["milestone_id"] == milestone_id
         )
 
+    def daily_cost_usd(self) -> float:
+        # The fake ignores the UTC-day filter (tests don't span midnight).
+        return float(sum(r["cost_usd"] for r in self.records))
+
+    def daily_by_role(self) -> list[tuple[str, int, float]]:
+        agg: dict[str, tuple[int, float]] = {}
+        for r in self.records:
+            tokens, cost = agg.get(r["role"], (0, 0.0))
+            agg[r["role"]] = (
+                tokens + r["input_tokens"] + r["output_tokens"],
+                cost + r["cost_usd"],
+            )
+        rows = [(role, t, c) for role, (t, c) in agg.items()]
+        rows.sort(key=lambda x: x[2], reverse=True)
+        return rows
+
 
 # ---------------------------------------------------------------------------
 # Crews
@@ -341,9 +357,26 @@ class RecordingTelegram:
 
 @dataclass
 class FakeGitHub:
-    """Records PR opens; returns a deterministic URL."""
+    """Records repo creation + PR opens; returns deterministic values.
+
+    ``push_remote`` can be pointed at a local bare repo (``file://...``)
+    so integration tests exercise the real push path without network.
+    """
 
     calls: list[dict[str, str]] = field(default_factory=list)
+    created: list[str] = field(default_factory=list)
+    push_remote: str = "https://x-access-token@github.com/fake/repo.git"
+
+    def create_repo(self, *, name: str, description: str = "", private: bool = True) -> Any:
+        from aidevswarm.tools import CreatedRepo
+
+        del description, private
+        self.created.append(name)
+        return CreatedRepo(
+            full_name=f"fake/{name}",
+            html_url=f"https://example.invalid/fake/{name}",
+            push_remote=self.push_remote,
+        )
 
     def open_pr(self, *, repo_url: str, branch: str, title: str, body: str) -> str:
         self.calls.append({"repo_url": repo_url, "branch": branch, "title": title, "body": body})

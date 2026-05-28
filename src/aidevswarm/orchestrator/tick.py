@@ -17,7 +17,8 @@ Per-tick responsibilities:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
 from aidevswarm.crews.protocols import BuildCrew, IdeationCrew, PlanningCrew
 from aidevswarm.crews.replanning.protocols import ReplanningCrew
@@ -45,13 +46,15 @@ from aidevswarm.schemas import (
     Split,
 )
 from aidevswarm.settings import Settings
+from aidevswarm.tools.budget import UnlimitedTokenBudget
 from aidevswarm.tools.protocols import (
     GitHubTool,
     KillSwitch,
     Sandbox,
     Telegram,
+    TokenBudget,
 )
-from aidevswarm.tools.workspace import WorkspaceManager
+from aidevswarm.tools.workspace import Workspace, WorkspaceManager
 
 
 @dataclass
@@ -72,6 +75,14 @@ class TickDeps:
     telegram: Telegram
     github: GitHubTool
     kill_switch: KillSwitch
+    # Daily throttle + per-milestone sanity cap. Defaults to a no-op so
+    # tests and Phase 0/1 callers need not wire it; production passes a
+    # real DefaultTokenBudget.
+    token_budget: TokenBudget = field(default_factory=UnlimitedTokenBudget)
+    # Optional sink called after every project state transition. The
+    # orchestrator wires this to publish a `projects` SSE event so the web
+    # UI updates live; tests leave it None.
+    transition_sink: Callable[[Project], None] | None = None
 
 
 class Tick:
@@ -155,8 +166,39 @@ class Tick:
         if milestone is None:
             return self._move(project, ProjectState.INTEGRATION)
 
+        # Daily throttle (ARCHITECTURE §4): pace the system, never kill a
+        # project. If today's spend is already over budget, pause WITHOUT
+        # changing state — the pool worker idles (advance returns None)
+        # and resumes automatically once the UTC day rolls over.
+        if not self._d.token_budget.can_spend(milestone_id=None, requested=0):
+            self._log.info("tick.daily_budget_reached", project=project.name)
+            return None
+
+        # Per-milestone sanity cap (circuit breaker): if prior attempts on
+        # THIS milestone already blew the cap, we're stuck in a loop. Stop
+        # burning tokens — count the attempt and route to the replanner,
+        # or block once the retry limit is hit.
+        if not self._d.token_budget.can_spend(milestone_id=milestone.id, requested=0):
+            self._log.warning(
+                "tick.milestone_budget_tripped",
+                project=project.name,
+                milestone=milestone.title,
+                retry_count=milestone.retry_count,
+            )
+            self._d.milestone_repo.record_attempt(milestone.id, success=False, commit_hash=None)
+            if milestone.retry_count + 1 >= self._d.settings.milestone_retry_limit:
+                self._d.telegram.send(
+                    f"[ai-dev-swarm] project '{project.name}' blocked: milestone "
+                    f"'{milestone.title}' exceeded its token sanity cap."
+                )
+                return self._move(project, ProjectState.BLOCKED)
+            return self._move(project, ProjectState.REPLANNING)
+
         self._d.milestone_repo.update_state(milestone.id, MilestoneState.BUILDING)
         workspace = self._d.workspace_manager.for_project(project.name)
+        # Approved projects get a private GitHub repo on the first build;
+        # the remote is set so each milestone can be pushed as it lands.
+        project = self._ensure_repo(project, workspace)
 
         result = self._d.build_crew.run(
             milestone=milestone,
@@ -191,6 +233,9 @@ class Tick:
         else:
             commit_hash = result.commit_hash
         self._d.milestone_repo.record_attempt(milestone.id, success=True, commit_hash=commit_hash)
+        # Push this milestone's commit straight away so the operator sees
+        # the repo grow over the days/weeks of the build.
+        self._push(project, workspace)
         # Phase 4: route to replanner so it can decide what (if anything)
         # to change about the upcoming milestone, and check the
         # consolidation cadence.
@@ -228,7 +273,24 @@ class Tick:
         if cheap_split is not None:
             return self._apply_action(project, cheap_split)
 
-        # 4) Replanner crew (LLM): always Noop-on-error so we never
+        # 3b) Clean-success fast path. After a milestone PASSES, the next
+        #     pending milestone is fresh (retry_count == 0). There's no
+        #     failure signal, so the LLM replanner would almost always
+        #     Noop — yet it costs two Opus agents EVERY milestone. Skip
+        #     it and go straight to BUILDING. (Operator steering still
+        #     reaches the build crew: notes aren't role-scoped, so the
+        #     Developer pulls them at build start. The replanner only
+        #     earns its cost when a milestone has actually failed.)
+        if next_milestone.retry_count == 0:
+            self._log.info(
+                "replanner.skipped_clean",
+                project=project.name,
+                milestone=next_milestone.title,
+            )
+            return self._move(project, ProjectState.BUILDING)
+
+        # 4) Replanner crew (LLM): only when the next milestone has failed
+        #    before (retry_count > 0). Always Noop-on-error so we never
         #    take the project down because of a tracing or quota blip.
         recent_sessions = _recent_sessions(self._d.session_repo, milestones, limit=6)
         action = self._d.replanning_crew.run(
@@ -239,18 +301,61 @@ class Tick:
         return self._apply_action(project, action)
 
     def _integrate(self, project: Project) -> Project:
+        # The project shipped milestone-by-milestone straight to `main`
+        # (operator's choice), so integration is a final push + notify —
+        # no PR. A late push catches anything an earlier push missed.
         if project.github_repo:
-            try:
-                pr_url = self._d.github.open_pr(
-                    repo_url=project.github_repo,
-                    branch="main",
-                    title=f"Initial release: {project.name}",
-                    body=project.spec.summary,
-                )
-                self._d.telegram.send(f"[ai-dev-swarm] '{project.name}' shipped: {pr_url}")
-            except Exception as exc:
-                self._log.warning("tick.publish_failed", error=str(exc))
+            workspace = self._d.workspace_manager.for_project(project.name)
+            self._push(project, workspace)
+            self._d.telegram.send(
+                f"[ai-dev-swarm] '{project.name}' shipped to {project.github_repo}"
+            )
         return self._move(project, ProjectState.DONE)
+
+    # ------------------------------------------------------------------
+    # GitHub publish (private repo on approval, push per milestone)
+    # ------------------------------------------------------------------
+
+    def _ensure_repo(self, project: Project, workspace: Workspace) -> Project:
+        """Create the project's private GitHub repo + wire the remote once.
+
+        No-op when the repo already exists (set on a prior tick / resumed
+        across days) or GitHub isn't configured. Failures are logged and
+        swallowed — a GitHub outage must not stop the local build.
+        """
+        if project.github_repo:
+            return project
+        if not self._d.settings.github_token.get_secret_value():
+            return project  # GitHub not configured -> build locally only
+        try:
+            repo = self._d.github.create_repo(
+                name=project.name,
+                description=project.spec.summary,
+                private=True,
+            )
+            workspace.set_remote(repo.push_remote)
+            self._d.project_repo.set_github_repo(project.id, repo.html_url)
+            self._d.telegram.send(
+                f"[ai-dev-swarm] private repo created for '{project.name}': {repo.html_url}"
+            )
+            self._log.info("tick.repo_created", project=project.name, repo=repo.full_name)
+            return project.model_copy(update={"github_repo": repo.html_url})
+        except Exception as exc:
+            self._log.warning("tick.repo_create_failed", project=project.name, error=str(exc))
+            return project
+
+    def _push(self, project: Project, workspace: Workspace) -> None:
+        """Push ``main`` to the project's remote. Best-effort; never raises."""
+        if not project.github_repo or not workspace.has_remote():
+            return
+        token = self._d.settings.github_token.get_secret_value()
+        if not token:
+            return
+        try:
+            workspace.push("main", token=token)
+            self._log.info("tick.pushed", project=project.name)
+        except Exception as exc:
+            self._log.warning("tick.push_failed", project=project.name, error=str(exc))
 
     # ------------------------------------------------------------------
     # Replanner action application
@@ -298,6 +403,11 @@ class Tick:
             from_=project.state.value,
             to=new_state.value,
         )
+        if self._d.transition_sink is not None:
+            try:
+                self._d.transition_sink(updated)
+            except Exception as exc:  # a UI sink must never break the tick
+                self._log.warning("tick.transition_sink_failed", error=str(exc))
         return updated
 
 

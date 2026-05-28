@@ -67,6 +67,24 @@ def test_tester_tool_bash_is_pytest_namespaced(tmp_path: Path) -> None:
     assert "Bash" not in opts.allowed_tools
 
 
+def test_role_model_tiering(tmp_path: Path) -> None:
+    """Developer runs on the strong model; Tester on the cheap one (ARCH §7)."""
+    settings = Settings(
+        AIDEVSWARM_MODEL_STRONG="anthropic/claude-opus-4-7",
+        AIDEVSWARM_MODEL_FAST="anthropic/claude-haiku-4-5",
+    )
+    repo = FakeMilestoneSessionRepo()
+    ms = _milestone()
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+    dev = ClaudeAgentSDKDeveloperTool(settings, repo)
+    tester = ClaudeAgentSDKTesterTool(settings, repo)
+    dev_opts = dev.build_options(ms, ws, max_turns=10, max_budget_usd=1.0, resume=None)
+    tester_opts = tester.build_options(ms, ws, max_turns=10, max_budget_usd=1.0, resume=None)
+    assert dev_opts.model == "anthropic/claude-opus-4-7"
+    assert tester_opts.model == "anthropic/claude-haiku-4-5"
+
+
 def test_resume_threads_through_options(tmp_path: Path) -> None:
     repo = FakeMilestoneSessionRepo()
     tool = ClaudeAgentSDKDeveloperTool(Settings(), repo)
@@ -254,3 +272,104 @@ def test_developer_and_tester_have_template_files() -> None:
     repo = FakeMilestoneSessionRepo()
     ClaudeAgentSDKDeveloperTool(Settings(), repo)
     ClaudeAgentSDKTesterTool(Settings(), repo)
+
+
+# ---------------------------------------------------------------------------
+# _arun (SDK client mocked) — session persistence + spend recording
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_arun_persists_session_and_records_spend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from claude_agent_sdk import ResultMessage
+
+    from aidevswarm.tools import claude_agent_sdk_tool as mod
+    from aidevswarm.tools.budget import SpendRecorder
+    from tests.fakes import InMemoryTokenLogRepo
+
+    final = ResultMessage(
+        subtype="success",
+        duration_ms=10,
+        duration_api_ms=5,
+        is_error=False,
+        num_turns=4,
+        session_id="sess-1",
+        total_cost_usd=0.12,
+        result="done",
+        usage={"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 20},
+    )
+
+    class _FakeClient:
+        def __init__(self, options: object = None) -> None:
+            pass
+
+        async def __aenter__(self) -> _FakeClient:
+            return self
+
+        async def __aexit__(self, *_: object) -> bool:
+            return False
+
+        async def query(self, _prompt: str) -> None:
+            return None
+
+        async def receive_messages(self):  # type: ignore[no-untyped-def]
+            yield final
+
+    monkeypatch.setattr(mod, "ClaudeSDKClient", _FakeClient)
+
+    token_repo = InMemoryTokenLogRepo()
+    session_repo = FakeMilestoneSessionRepo()
+    tool = ClaudeAgentSDKDeveloperTool(Settings(), session_repo, recorder=SpendRecorder(token_repo))
+    ms = _milestone()
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+
+    result = await tool._arun(ms, ws, max_turns=10, max_budget_usd=1.0)
+    assert result.success is True
+    assert result.session_id == "sess-1"
+    # Session row persisted (so a retry can resume).
+    assert session_repo.latest_for(ms.id, "Developer") is not None
+    # Spend recorded: input counts cache reads, output is output_tokens,
+    # cost is the SDK's exact total_cost_usd.
+    assert len(token_repo.records) == 1
+    rec = token_repo.records[0]
+    assert rec["input_tokens"] == 120  # 100 + 20 cache_read
+    assert rec["output_tokens"] == 50
+    assert rec["cost_usd"] == 0.12
+    assert rec["role"] == "Developer"
+
+
+@pytest.mark.asyncio
+async def test_arun_handles_stream_with_no_result_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aidevswarm.tools import claude_agent_sdk_tool as mod
+
+    class _EmptyClient:
+        def __init__(self, options: object = None) -> None:
+            pass
+
+        async def __aenter__(self) -> _EmptyClient:
+            return self
+
+        async def __aexit__(self, *_: object) -> bool:
+            return False
+
+        async def query(self, _prompt: str) -> None:
+            return None
+
+        async def receive_messages(self):  # type: ignore[no-untyped-def]
+            return
+            yield  # pragma: no cover — makes this an (empty) async generator
+
+    monkeypatch.setattr(mod, "ClaudeSDKClient", _EmptyClient)
+
+    tool = ClaudeAgentSDKDeveloperTool(Settings(), FakeMilestoneSessionRepo())
+    ms = _milestone()
+    ws = Workspace(tmp_path / "ws2")
+    ws.init()
+    result = await tool._arun(ms, ws, max_turns=10, max_budget_usd=1.0)
+    assert result.success is False
+    assert result.failure_reason == "no_result_message"

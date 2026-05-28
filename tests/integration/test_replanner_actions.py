@@ -86,6 +86,8 @@ def _two_milestone_graph() -> MilestoneGraph:
 def _build_deps(
     tmp_path: Path,
     replanning_crew: FakeReplanningCrew,
+    *,
+    build_succeed: bool = True,
 ) -> tuple[Tick, InMemoryProjectRepo, InMemoryMilestoneRepo, RecordingTelegram]:
     settings = Settings(
         AIDEVSWARM_REQUIRE_APPROVAL=False,
@@ -104,7 +106,7 @@ def _build_deps(
         session_repo=session_repo,
         ideation_crew=FakeIdeationCrew(ideas=[_scored_idea()]),
         planning_crew=FakePlanningCrew(graph=_two_milestone_graph()),
-        build_crew=FakeBuildCrew(succeed=True),
+        build_crew=FakeBuildCrew(succeed=build_succeed),
         replanning_crew=replanning_crew,
         auto_split=AutoSplitPredictor(settings, session_repo),
         workspace_manager=WorkspaceManager(tmp_path / "workspaces"),
@@ -119,11 +121,15 @@ def _build_deps(
 def test_replanner_amend_patches_milestone_spec_and_returns_to_building(
     tmp_path: Path,
 ) -> None:
-    """Amend path: patch is applied via ``MilestoneRepo.update_spec``."""
-    # First we need a milestone_id, which we can only know after planning.
-    # So start with Noop, drive past planning, then swap in Amend.
+    """Amend path: patch is applied via ``MilestoneRepo.update_spec``.
+
+    The LLM replanner only runs on a *failure* signal (the upcoming
+    milestone has ``retry_count > 0``) — a clean milestone success skips
+    it to save cost. So we drive a failing build first, which routes the
+    just-failed milestone back through REPLANNING with retry_count == 1.
+    """
     crew = FakeReplanningCrew()
-    tick, project_repo, milestone_repo, _ = _build_deps(tmp_path, crew)
+    tick, project_repo, milestone_repo, _ = _build_deps(tmp_path, crew, build_succeed=False)
     project = project_repo.create(_project("amend-target"))
 
     # Tick 1: QUEUED -> PLANNING.
@@ -133,24 +139,50 @@ def test_replanner_amend_patches_milestone_spec_and_returns_to_building(
 
     milestones = milestone_repo.list_for_project(project.id)
     assert len(milestones) == 2
-    first, second = milestones
+    first, _second = milestones
 
-    # Tick 3: BUILDING -> first milestone done -> REPLANNING. Replace the
-    # crew's canned action with an Amend targeting the still-pending
-    # second milestone.
+    # Tick 3: BUILDING -> first milestone FAILS -> REPLANNING (retry=1).
     crew.action = Amend(
-        milestone_id=second.id,
+        milestone_id=first.id,
         patch={"description": "rewritten by replanner"},
     )
-    tick.advance_one_step()  # builds first, transitions to REPLANNING
+    tick.advance_one_step()
     snapshot = project_repo.get(project.id)
     assert snapshot is not None and snapshot.state is ProjectState.REPLANNING
 
-    # Tick 4: REPLANNING -> _apply_action(Amend) -> BUILDING.
+    # Tick 4: REPLANNING -> LLM replanner runs (retry_count > 0) ->
+    # _apply_action(Amend) -> BUILDING.
     tick.advance_one_step()
 
+    assert crew.calls, "replanner should run when the next milestone has failed"
     after = {m.id: m for m in milestone_repo.list_for_project(project.id)}
-    assert after[second.id].spec.description == "rewritten by replanner"
+    assert after[first.id].spec.description == "rewritten by replanner"
+    snapshot = project_repo.get(project.id)
+    assert snapshot is not None and snapshot.state is ProjectState.BUILDING
+
+
+def test_clean_milestone_success_skips_the_llm_replanner(tmp_path: Path) -> None:
+    """Cost optimisation: a passing milestone must NOT invoke the replanner.
+
+    The next pending milestone is fresh (retry_count == 0), so the
+    REPLANNING state advances straight to BUILDING via the fast path —
+    no two-Opus replanner call is made.
+    """
+    crew = FakeReplanningCrew()
+    tick, project_repo, milestone_repo, _ = _build_deps(tmp_path, crew, build_succeed=True)
+    project = project_repo.create(_project("clean-success"))
+
+    # QUEUED -> PLANNING -> BUILDING.
+    tick.advance_one_step()
+    tick.advance_one_step()
+    # BUILDING: first milestone PASSES -> REPLANNING.
+    tick.advance_one_step()
+    snapshot = project_repo.get(project.id)
+    assert snapshot is not None and snapshot.state is ProjectState.REPLANNING
+    # REPLANNING: clean path -> straight to BUILDING, replanner skipped.
+    tick.advance_one_step()
+
+    assert crew.calls == [], "replanner must be skipped on a clean milestone success"
     snapshot = project_repo.get(project.id)
     assert snapshot is not None and snapshot.state is ProjectState.BUILDING
 
@@ -160,7 +192,7 @@ def test_replanner_escalate_routes_to_blocked_and_pings_telegram(
 ) -> None:
     """Escalate path: project goes BLOCKED + an alert is sent."""
     crew = FakeReplanningCrew()
-    tick, project_repo, milestone_repo, telegram = _build_deps(tmp_path, crew)
+    tick, project_repo, milestone_repo, telegram = _build_deps(tmp_path, crew, build_succeed=False)
     project = project_repo.create(_project("escalate-target"))
 
     # Drive: QUEUED -> PLANNING -> BUILDING.
@@ -169,10 +201,10 @@ def test_replanner_escalate_routes_to_blocked_and_pings_telegram(
     milestones = milestone_repo.list_for_project(project.id)
     assert len(milestones) == 2
 
-    # Build first milestone -> REPLANNING.
+    # Build first milestone FAILS -> REPLANNING (retry_count == 1).
     crew.action = Escalate(reason="developer keeps regressing tests", freeze=True)
     tick.advance_one_step()
-    # REPLANNING -> _apply_action(Escalate) -> BLOCKED.
+    # REPLANNING -> LLM replanner runs -> _apply_action(Escalate) -> BLOCKED.
     tick.advance_one_step()
 
     snapshot = project_repo.get(project.id)

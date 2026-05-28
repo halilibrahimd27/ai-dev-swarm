@@ -77,3 +77,51 @@ def test_git_log_has_initial_bootstrap_commit(tmp_path: Path) -> None:
     ws.init()
     log = subprocess.check_output(["git", "log", "--oneline"], cwd=ws.root, text=True)
     assert "workspace bootstrap" in log
+
+
+# ---------------------------------------------------------------------------
+# Remote / push
+# ---------------------------------------------------------------------------
+
+
+def test_set_remote_is_idempotent_and_has_remote(tmp_path: Path) -> None:
+    ws = Workspace(tmp_path / "epsilon")
+    ws.init()
+    assert ws.has_remote() is False
+    ws.set_remote("https://x-access-token@github.com/me/epsilon.git")
+    assert ws.has_remote() is True
+    # Calling again updates the URL rather than erroring on a duplicate.
+    ws.set_remote("https://x-access-token@github.com/me/epsilon2.git")
+    url = subprocess.check_output(
+        ["git", "remote", "get-url", "origin"], cwd=ws.root, text=True
+    ).strip()
+    assert url.endswith("epsilon2.git")
+
+
+def test_push_to_local_bare_remote(tmp_path: Path) -> None:
+    """End-to-end: push lands commits in a bare 'remote' repo."""
+    bare = tmp_path / "remote.git"
+    subprocess.check_call(["git", "init", "--bare", "-b", "main", str(bare)])
+    ws = Workspace(tmp_path / "zeta")
+    ws.init()
+    (ws.root / "feature.txt").write_text("payload", encoding="utf-8")
+    ws.commit_all("feat: add feature")
+    ws.set_remote(f"file://{bare}")
+    ws.push("main")
+    # The bare repo now has the commit.
+    log = subprocess.check_output(["git", "log", "--oneline"], cwd=bare, text=True)
+    assert "add feature" in log
+
+
+def test_push_with_token_keeps_secret_out_of_git_config(tmp_path: Path) -> None:
+    """The token must never be persisted in .git/config."""
+    bare = tmp_path / "remote.git"
+    subprocess.check_call(["git", "init", "--bare", "-b", "main", str(bare)])
+    ws = Workspace(tmp_path / "eta")
+    ws.init()
+    (ws.root / "f.txt").write_text("x", encoding="utf-8")
+    ws.commit_all("feat: f")
+    ws.set_remote(f"file://{bare}")
+    ws.push("main", token="ghp_supersecret")
+    config = (ws.root / ".git" / "config").read_text(encoding="utf-8")
+    assert "ghp_supersecret" not in config

@@ -48,6 +48,12 @@ class Settings(BaseSettings):
         default="anthropic/claude-haiku-4-5",
         validation_alias="AIDEVSWARM_MODEL_FAST",
     )
+    # Max output tokens for the CrewAI JSON-emitting agents (PM/Architect,
+    # Ideator/Critic, Reviewer, Replanner). CrewAI's default is low enough
+    # that a full milestone-graph JSON gets truncated mid-string and fails
+    # to parse — which blocks the project after paying for the call. Opus
+    # supports far more; 16k comfortably fits a milestone graph.
+    max_output_tokens: int = Field(default=16000, validation_alias="AIDEVSWARM_MAX_OUTPUT_TOKENS")
 
     # --- GitHub -----------------------------------------------------------
     github_token: SecretStr = Field(default=SecretStr(""), validation_alias="GITHUB_TOKEN")

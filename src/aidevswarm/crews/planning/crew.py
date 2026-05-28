@@ -11,16 +11,18 @@ pass.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from aidevswarm.crews._parsing import clean_milestone_dict, loads_lenient
 from aidevswarm.crews._prompts import load_prompt
+from aidevswarm.crews._spend import record_crew_spend
 from aidevswarm.logging_config import get_logger
-from aidevswarm.schemas import MilestoneGraph, MilestoneSpec, ProjectSpec
+from aidevswarm.schemas import AcceptanceCriterion, MilestoneGraph, MilestoneSpec, ProjectSpec
 from aidevswarm.settings import Settings
 from aidevswarm.steering import SteeringRepo, render_prompt
+from aidevswarm.tools import SpendRecorder
 
 _CREW_DIR = Path(__file__).resolve().parent
 
@@ -33,10 +35,12 @@ class CrewaiPlanningCrew:
         settings: Settings,
         *,
         steering_repo: SteeringRepo | None = None,
+        recorder: SpendRecorder | None = None,
     ) -> None:
         self._settings = settings
         self._log = get_logger(__name__)
         self._steering = steering_repo
+        self._recorder = recorder
         # Store the raw templates; render per-run so steering notes added
         # between runs are picked up.
         self._pm_template = load_prompt(_CREW_DIR, "pm")
@@ -50,16 +54,19 @@ class CrewaiPlanningCrew:
     def _build_crew(self, project_id: UUID, spec: ProjectSpec) -> Any:
         from crewai import Agent, Crew, Process, Task
 
+        from aidevswarm.crews._llm import make_llm
+
         pm_backstory = render_prompt(self._pm_template, steering_notes=self._pull(project_id, "PM"))
         arch_backstory = render_prompt(
             self._arch_template, steering_notes=self._pull(project_id, "Architect")
         )
+        strong_llm = make_llm(self._settings.model_strong, self._settings.max_output_tokens)
 
         pm = Agent(
             role="PM",
             goal="Decompose the project into 4-10 testable milestones.",
             backstory=pm_backstory,
-            llm=self._settings.model_strong,
+            llm=strong_llm,
             verbose=False,
             allow_delegation=False,
         )
@@ -67,7 +74,7 @@ class CrewaiPlanningCrew:
             role="Architect",
             goal="Set the technical foundation and per-milestone notes.",
             backstory=arch_backstory,
-            llm=self._settings.model_strong,
+            llm=strong_llm,
             verbose=False,
             allow_delegation=False,
         )
@@ -99,6 +106,14 @@ class CrewaiPlanningCrew:
     def run(self, project_id: UUID, spec: ProjectSpec) -> MilestoneGraph:
         crew = self._build_crew(project_id, spec)
         result = crew.kickoff()
+        record_crew_spend(
+            self._recorder,
+            result,
+            project_id=project_id,
+            milestone_id=None,
+            role="planning",
+            model=self._settings.model_strong,
+        )
         specs = self._parse_specs(result, self._log)
         if not specs:
             # MilestoneGraph requires >= 1 milestone; an empty list +
@@ -122,8 +137,8 @@ class CrewaiPlanningCrew:
         """
         raw = getattr(crew_output, "raw", crew_output)
         try:
-            data = json.loads(raw) if isinstance(raw, str) else raw
-        except json.JSONDecodeError as exc:
+            data = loads_lenient(raw)
+        except Exception as exc:
             if log is not None:
                 log.warning(
                     "planning.parse.json_error",
@@ -131,15 +146,18 @@ class CrewaiPlanningCrew:
                     raw_head=str(raw)[:200] if raw else "",
                 )
             return []
+        entries = data.get("milestones", []) if isinstance(data, dict) else []
         out: list[MilestoneSpec] = []
-        for entry in data.get("milestones", []) if isinstance(data, dict) else []:
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            # Drop LLM-added extras (e.g. "id": "m1") that MilestoneSpec's
+            # extra='forbid' would otherwise reject, at the milestone and
+            # nested acceptance-criteria levels.
+            cleaned = clean_milestone_dict(entry, MilestoneSpec, AcceptanceCriterion)
             try:
-                out.append(MilestoneSpec.model_validate(entry))
+                out.append(MilestoneSpec.model_validate(cleaned))
             except Exception as exc:
                 if log is not None:
-                    log.warning(
-                        "planning.parse.skip_entry",
-                        error=str(exc),
-                        entry=str(entry)[:200],
-                    )
+                    log.warning("planning.parse.skip_entry", error=str(exc), entry=str(entry)[:200])
         return out

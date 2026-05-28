@@ -75,3 +75,9 @@ class TokenLogRepo(Protocol):
 
     def daily_total_tokens(self) -> int: ...
     def milestone_total_tokens(self, milestone_id: UUID) -> int: ...
+    def daily_cost_usd(self) -> float:
+        """Sum of ``cost_usd`` recorded so far today (UTC)."""
+
+    def daily_by_role(self) -> list[tuple[str, int, float]]:
+        """Today's spend grouped by role: ``(role, tokens, cost_usd)`` rows,
+        most-expensive first."""

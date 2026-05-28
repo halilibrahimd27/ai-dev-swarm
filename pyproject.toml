@@ -128,12 +128,13 @@ disallow_any_unimported = false
 ignore_missing_imports = false
 
 [[tool.mypy.overrides]]
-# CrewAI / LiteLLM publish partial or no type info; allow.
+# CrewAI / LiteLLM / json_repair publish partial or no type info; allow.
 module = [
   "crewai",
   "crewai.*",
   "litellm",
   "litellm.*",
+  "json_repair",
 ]
 ignore_missing_imports = true
 

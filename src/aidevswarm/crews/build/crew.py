@@ -25,12 +25,13 @@ from typing import Any
 from claude_agent_sdk.types import McpStdioServerConfig
 
 from aidevswarm.crews._prompts import load_prompt
+from aidevswarm.crews._spend import record_crew_spend
 from aidevswarm.db.sessions import MilestoneSessionRepo
 from aidevswarm.logging_config import get_logger
 from aidevswarm.schemas import Milestone, MilestoneBuildResult
 from aidevswarm.settings import Settings
 from aidevswarm.steering import SteeringRepo, render_prompt
-from aidevswarm.tools import Sandbox, SandboxResult, Workspace
+from aidevswarm.tools import Sandbox, SandboxResult, SpendRecorder, Workspace
 from aidevswarm.tools.claude_agent_sdk_tool import (
     ClaudeAgentSDKDeveloperTool,
     ClaudeAgentSDKTesterTool,
@@ -50,16 +51,26 @@ class CrewaiBuildCrew:
         *,
         steering_repo: SteeringRepo | None = None,
         mcp_servers: dict[str, McpStdioServerConfig] | None = None,
+        recorder: SpendRecorder | None = None,
     ) -> None:
         self._settings = settings
         self._log = get_logger(__name__)
         self._steering = steering_repo
+        self._recorder = recorder
         self._reviewer_template = load_prompt(_CREW_DIR, "reviewer")
         self._dev_tool = ClaudeAgentSDKDeveloperTool(
-            settings, session_repo, steering_repo=steering_repo, mcp_servers=mcp_servers
+            settings,
+            session_repo,
+            steering_repo=steering_repo,
+            mcp_servers=mcp_servers,
+            recorder=recorder,
         )
         self._tester_tool = ClaudeAgentSDKTesterTool(
-            settings, session_repo, steering_repo=steering_repo, mcp_servers=mcp_servers
+            settings,
+            session_repo,
+            steering_repo=steering_repo,
+            mcp_servers=mcp_servers,
+            recorder=recorder,
         )
 
     # ------------------------------------------------------------------
@@ -102,6 +113,8 @@ class CrewaiBuildCrew:
     ) -> MilestoneBuildResult:
         from crewai import Agent, Crew, Process, Task
 
+        from aidevswarm.crews._llm import make_llm
+
         backstory = render_prompt(
             self._reviewer_template,
             steering_notes=(
@@ -115,7 +128,7 @@ class CrewaiBuildCrew:
             role="Reviewer",
             goal="Approve only if acceptance criteria are genuinely met.",
             backstory=backstory,
-            llm=self._settings.model_strong,
+            llm=make_llm(self._settings.model_strong, self._settings.max_output_tokens),
             verbose=False,
             allow_delegation=False,
         )
@@ -142,6 +155,14 @@ class CrewaiBuildCrew:
             verbose=False,
         )
         result = crew.kickoff()
+        record_crew_spend(
+            self._recorder,
+            result,
+            project_id=milestone.project_id,
+            milestone_id=milestone.id,
+            role="Reviewer",
+            model=self._settings.model_strong,
+        )
         return self._parse(result, fallback_tokens=dev.turns + tester.turns)
 
     # ------------------------------------------------------------------
