@@ -11,27 +11,45 @@
 <body>
   <header>
     <h1>ai-dev-swarm</h1>
-    <span id="ws-status" class="status">connecting…</span>
+    <span class="tagline">autonomous dev swarm</span>
+    <div class="header-right">
+      <span id="spend-chip" class="chip" title="estimated spend today (UTC)">$0.00 today</span>
+      <span id="ws-status" class="status">connecting…</span>
+    </div>
   </header>
 
   <main class="grid">
     <!-- (a) State pane -->
     <section id="state-pane" aria-label="Projects + milestones">
-      <h2>state</h2>
+      <h2>projects</h2>
       <ul id="project-list" class="project-list"></ul>
+      <div id="milestones" class="milestones" hidden>
+        <h3>milestones <small id="milestone-count"></small></h3>
+        <ol id="milestone-list" class="milestone-list"></ol>
+      </div>
     </section>
 
     <!-- (b) Live transcript pane -->
     <section id="transcript-pane" aria-label="Live inter-agent transcript">
-      <h2>transcript <small id="current-project">(no project selected)</small></h2>
-      <ol id="transcript" class="transcript"></ol>
+      <div class="pane-head">
+        <h2>transcript <small id="current-project">(no project selected)</small></h2>
+        <div class="transcript-toolbar">
+          <label class="toggle"><input type="checkbox" id="autoscroll" checked /> autoscroll</label>
+          <select id="role-filter" aria-label="filter by role">
+            <option value="">all roles</option>
+          </select>
+          <button id="clear-transcript" type="button" class="ghost">clear</button>
+        </div>
+      </div>
+      <ol id="transcript" class="transcript" aria-live="polite"></ol>
+      <p id="transcript-empty" class="empty-hint">Select a project to watch its agents work in real time.</p>
       <form id="steer-form" class="steer">
-        <input id="steer-input" type="text" placeholder="drop a steering note (fire-and-forget)…" autocomplete="off" />
+        <input id="steer-input" type="text" placeholder="steer the agents — drop a note (fire-and-forget)…" autocomplete="off" />
         <button type="submit">send</button>
       </form>
     </section>
 
-    <!-- (c) Controls pane -->
+    <!-- (c) Controls + spend pane -->
     <section id="controls-pane" aria-label="Operator controls">
       <h2>controls</h2>
       <fieldset>
@@ -41,10 +59,12 @@
       </fieldset>
       <fieldset>
         <legend>this project</legend>
-        <button data-intent="approve">approve</button>
-        <button data-intent="pause_project">pause</button>
-        <button data-intent="resume_project">resume</button>
-        <button data-intent="abort_project" class="danger">abort</button>
+        <div class="btn-row">
+          <button data-intent="approve">approve</button>
+          <button data-intent="pause_project">pause</button>
+          <button data-intent="resume_project">resume</button>
+          <button data-intent="abort_project" class="danger">abort</button>
+        </div>
       </fieldset>
       <fieldset>
         <legend>scope</legend>
@@ -55,6 +75,14 @@
         <legend>global</legend>
         <button data-intent="kill_switch" class="danger">kill switch</button>
       </fieldset>
+
+      <h2 class="spend-title">spend today</h2>
+      <div id="spend-total" class="spend-total">$0.00 · 0 tokens</div>
+      <table id="spend-table" class="spend-table">
+        <tbody></tbody>
+      </table>
+
+      <h2 class="spend-title">activity</h2>
       <pre id="result-log" class="result-log" aria-live="polite"></pre>
     </section>
   </main>
