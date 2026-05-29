@@ -81,6 +81,40 @@ disclosure | (D)oS | (E)levation of privilege`.
 | (T) operator note injection abused | PreToolUse hook surfaces operator steering | The hook reads from `steering_notes`, written ONLY via the typed `Command` bus — schema-validated; nothing arbitrary lands there |
 | (I) credentials in generated code | Developer writes a key into a file | Detected at the L1 `bandit` step (secret scanner in `make verify`); production push gate ensures it never reaches GitHub |
 
+### CI sandbox (generated-code gate)
+
+Each finished milestone is gated by running the **generated project's own
+CI** (lint + types + tests). That means executing untrusted, LLM-written
+code — and the isolation depends on `AIDEVSWARM_SANDBOX_MODE`
+(`settings.py::sandbox_mode`, three implementations in `tools/sandbox.py`):
+
+- **`docker`** — `docker run --rm --network=none -v <ws>:/workspace:ro`
+  in an ephemeral container with **no network** and the workspace mounted
+  **read-only**, **no secrets** in the container env. This is the
+  treat-it-as-hostile option. Needs the host Docker socket + the
+  `aidevswarm-sandbox` image.
+- **`subprocess`** — **the compose DEFAULT** (the orchestrator container has
+  no Docker socket). `SubprocessSandbox` creates a throwaway `uv` venv,
+  `uv pip install`s the generated project **with its declared
+  dependencies**, then runs `ruff` + `mypy --strict` + `pytest` **inside the
+  orchestrator's own container**, which **has network** and **has the
+  orchestrator's environment** (including `ANTHROPIC_API_KEY`,
+  `GITHUB_TOKEN`, `POSTGRES_PASSWORD`).
+- **`inmemory`** — no execution at all; CI is a free pass (last resort,
+  quality then rests on the Reviewer LLM alone).
+
+| Threat | Vector | Mitigation |
+| --- | --- | --- |
+| (E) gen code executes in-process (`subprocess` mode) | `pytest` imports + runs the generated module; a `pyproject` build/install hook runs on `uv pip install` | **Accepted trade-off for a single-operator local system.** The code was authored by Claude (non-adversarial by assumption) and the only consumer is the operator. The gain over `inmemory` is that tests *actually run*, catching broken/garbage milestones that the old free-pass shipped blind. **For real isolation set `AIDEVSWARM_SANDBOX_MODE=docker`** — network-less, read-only, secret-free container. |
+| (I) gen code reads orchestrator secrets (`subprocess` mode) | `os.environ` is visible to in-process test code | Same trade-off; `docker` mode removes secrets from the gate entirely. The orchestrator container is on the docker bridge, never exposed to the LAN, so exfil requires both adversarial gen code AND outbound network. |
+| (T) malicious/typosquatted dependency pulled at install (`subprocess` mode) | generated `pyproject.toml` declares a hostile package; `uv pip install` fetches it with network | Bounded by the same non-adversarial-author assumption; `docker` mode isolates the install in a network-less container. Prompt-injection into the Developer is mitigated by the role's fixed `allowed_tools` allow-list (see the Claude Agent SDK rows above). |
+| (D) gen test suite hangs / loops | infinite loop in generated tests | Per-run `timeout_seconds` (default 1800s) on the subprocess; the build crew records a CI failure on timeout (`SandboxRun(exit_code=124)`) and the milestone retries/blocks |
+
+> The trust-boundary diagram's "sandbox container" reflects **`docker`**
+> mode. In the **default `subprocess`** mode there is no separate sandbox
+> container — the gate runs inside the orchestrator box. Operators who treat
+> generated code as fully hostile should switch to `docker` mode.
+
 ### Postgres
 
 | Threat | Vector | Mitigation |
@@ -146,6 +180,11 @@ disclosure | (D)oS | (E)levation of privilege`.
 6. **`bandit` + `pip-audit` + `semgrep`** in `make verify`: L1
    catches HIGH bandit; L2 catches known CVEs (with an explicit
    allowlist in `ci/audit_allowlist.txt`).
+7. **CI sandbox isolation**: `AIDEVSWARM_SANDBOX_MODE=docker` runs
+   the generated-code gate in a network-less, read-only, secret-free
+   container. The default `subprocess` mode runs it in-process for
+   convenience (no Docker socket needed) — see the *CI sandbox*
+   STRIDE section for the trade-off.
 
 ## Reporting a vulnerability
 
