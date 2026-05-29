@@ -142,10 +142,8 @@ class CrewaiBuildCrew:
         tester: SDKResult,
         ci: SandboxResult,
     ) -> MilestoneBuildResult:
-        from crewai import Agent, Crew, Process, Task
-
-        from aidevswarm.crews._llm import make_llm
-
+        # Pull steering notes ONCE (pull_unconsumed is consuming) and reuse
+        # the rendered backstory + context across attempts.
         backstory = render_prompt(
             self._reviewer_template,
             steering_notes=(
@@ -154,6 +152,46 @@ class CrewaiBuildCrew:
                 else []
             ),
         )
+        ctx = (
+            f"WORKSPACE: {workspace.root}\n"
+            f"MILESTONE: {milestone.title}\n"
+            f"SPEC:\n{milestone.spec.model_dump_json(indent=2)}\n"
+            f"DEVELOPER: session={dev.session_id} cost=${dev.cost_usd:.4f} turns={dev.turns}\n"
+            f"TESTER:    session={tester.session_id} cost=${tester.cost_usd:.4f} turns={tester.turns}\n"
+            f"CI: exit={ci.exit_code} stdout_tail={ci.stdout[-200:]!r}\n"
+        )
+
+        verdict = self._run_reviewer(milestone, backstory, ctx)
+        if verdict is None:
+            # The Reviewer's verdict was unparseable. Before defaulting to a
+            # PASS, give it ONE more shot — a single transient bad emit
+            # (truncation, prose wrap) shouldn't silently bypass the only
+            # LLM quality gate the milestone has.
+            self._log.info("build.reviewer_unparseable_retry", milestone=milestone.title)
+            verdict = self._run_reviewer(milestone, backstory, ctx)
+        if verdict is not None:
+            return verdict
+
+        # Still unparseable after a retry. The mechanical gates
+        # (Developer + Tester + CI) already PASSED, so accept rather than
+        # spiral on "missing required fields".
+        self._log.warning("build.reviewer_unparseable_pass", milestone=milestone.title)
+        return MilestoneBuildResult(
+            success=True,
+            summary="reviewer verdict unparseable after a retry; accepted (Developer+Tester+CI passed)",
+            tokens_used=dev.turns + tester.turns,
+        )
+
+    def _run_reviewer(
+        self,
+        milestone: Milestone,
+        backstory: str,
+        ctx: str,
+    ) -> MilestoneBuildResult | None:
+        """One Reviewer kickoff. Returns the verdict, or None if unparseable."""
+        from crewai import Agent, Crew, Process, Task
+
+        from aidevswarm.crews._llm import make_llm
 
         reviewer = Agent(
             role="Reviewer",
@@ -162,15 +200,6 @@ class CrewaiBuildCrew:
             llm=make_llm(self._settings.model_strong, self._settings.max_output_tokens),
             verbose=False,
             allow_delegation=False,
-        )
-
-        ctx = (
-            f"WORKSPACE: {workspace.root}\n"
-            f"MILESTONE: {milestone.title}\n"
-            f"SPEC:\n{milestone.spec.model_dump_json(indent=2)}\n"
-            f"DEVELOPER: session={dev.session_id} cost=${dev.cost_usd:.4f} turns={dev.turns}\n"
-            f"TESTER:    session={tester.session_id} cost=${tester.cost_usd:.4f} turns={tester.turns}\n"
-            f"CI: exit={ci.exit_code} stdout_tail={ci.stdout[-200:]!r}\n"
         )
         crew = Crew(
             agents=[reviewer],
@@ -200,37 +229,33 @@ class CrewaiBuildCrew:
             role="Reviewer",
             model=self._settings.model_strong,
         )
-        # Prefer CrewAI's validated structured output when present.
-        verdict = getattr(result, "pydantic", None)
-        if isinstance(verdict, MilestoneBuildResult):
-            return verdict
-        return self._parse(result, fallback_tokens=dev.turns + tester.turns)
+        return self._extract(result)
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse(crew_output: Any, *, fallback_tokens: int = 0) -> MilestoneBuildResult:
-        # The Reviewer is an LLM: its output may be empty, prose-wrapped,
-        # fenced, or slightly-malformed JSON. loads_lenient repairs it and
-        # never raises (a raw json.loads here crashed the whole build).
-        # NOTE: this is reached only AFTER the Developer + Tester ran and
-        # the CI gate PASSED. So if the Reviewer's verdict is unparseable,
-        # we treat the milestone as a PASS (the mechanical gates already
-        # succeeded) rather than spiralling on "missing required fields".
+    def _extract(crew_output: Any) -> MilestoneBuildResult | None:
+        """Pull a verdict out of the crew output, or None if unparseable.
+
+        The Reviewer is an LLM: its output may be empty, prose-wrapped,
+        fenced, or slightly-malformed JSON. Prefer CrewAI's validated
+        ``output_pydantic`` when present, else repair-and-validate the raw
+        text with ``loads_lenient``. Returns None (rather than a PASS
+        fallback) so the caller can decide whether to retry.
+        """
+        verdict = getattr(crew_output, "pydantic", None)
+        if isinstance(verdict, MilestoneBuildResult):
+            return verdict
         raw = getattr(crew_output, "raw", crew_output)
         data = loads_lenient(raw) if isinstance(raw, str) else raw
         if isinstance(data, dict):
             try:
                 return MilestoneBuildResult.model_validate(keep_known(MilestoneBuildResult, data))
             except Exception:
-                pass
-        return MilestoneBuildResult(
-            success=True,
-            summary="reviewer verdict unparseable; accepted (Developer+Tester+CI passed)",
-            tokens_used=fallback_tokens,
-        )
+                return None
+        return None
 
 
 # ----------------------------------------------------------------------
