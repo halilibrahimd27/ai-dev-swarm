@@ -21,6 +21,9 @@ from __future__ import annotations
 
 import contextlib
 import json
+import time
+from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
@@ -49,6 +52,69 @@ from aidevswarm.settings import Settings
 from aidevswarm.telegram.intent import HaikuIntentParser, IntentParseError
 
 
+class _PendingConfirmations:
+    """Bounded, self-expiring store for destructive commands awaiting a tap.
+
+    A destructive command is stashed here when the bot echoes it for a
+    ``[Yes][No]`` confirmation, keyed by a short token (Telegram's 64-byte
+    ``callback_data`` cap can't carry the full command JSON). It was a plain
+    ``dict`` that only shrank when the operator actually tapped Yes/No — a
+    confirmation that was never answered lived forever, so a long-running bot
+    leaked memory through abandoned confirmations.
+
+    Entries now expire after ``ttl_seconds`` and the store is capped at
+    ``max_entries`` (oldest evicted first). The surface is dict-compatible
+    (``store[token] = cmd``, ``token in store``, ``store.pop(token, None)``)
+    so the bot code is unchanged; pruning happens on every access. ``clock``
+    is injectable for tests and defaults to ``time.monotonic`` (immune to
+    wall-clock jumps).
+    """
+
+    def __init__(
+        self,
+        *,
+        ttl_seconds: float = 3600.0,
+        max_entries: int = 256,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._ttl = ttl_seconds
+        self._max = max_entries
+        self._clock = clock
+        self._items: OrderedDict[str, tuple[Command, float]] = OrderedDict()
+
+    def __setitem__(self, token: str, command: Command) -> None:
+        self._prune()
+        self._items[token] = (command, self._clock())
+        self._items.move_to_end(token)
+        while len(self._items) > self._max:
+            self._items.popitem(last=False)  # evict the oldest
+
+    def __getitem__(self, token: str) -> Command:
+        self._prune()
+        return self._items[token][0]
+
+    def __contains__(self, token: str) -> bool:
+        self._prune()
+        return token in self._items
+
+    def __len__(self) -> int:
+        self._prune()
+        return len(self._items)
+
+    def pop(self, token: str, default: Command | None = None) -> Command | None:
+        self._prune()
+        entry = self._items.pop(token, None)
+        return entry[0] if entry is not None else default
+
+    def _prune(self) -> None:
+        if not self._items:
+            return
+        cutoff = self._clock() - self._ttl
+        stale = [token for token, (_, ts) in self._items.items() if ts < cutoff]
+        for token in stale:
+            del self._items[token]
+
+
 @dataclass
 class TelegramBot:
     """Polling-mode bot wiring inline keyboards + Haiku-parsed text."""
@@ -64,8 +130,9 @@ class TelegramBot:
         # Pending destructive commands awaiting a [Yes][No] tap, keyed by
         # a short token. Telegram caps callback_data at 64 bytes, so we
         # CANNOT round-trip the full command JSON through the button —
-        # we stash it here and pass only the token.
-        self._pending: dict[str, Command] = {}
+        # we stash it here and pass only the token. Bounded + TTL'd so
+        # never-answered confirmations can't leak memory over a long run.
+        self._pending = _PendingConfirmations()
 
     # ------------------------------------------------------------------
     # Lifecycle

@@ -27,6 +27,7 @@ from aidevswarm.schemas import (
 )
 from aidevswarm.settings import Settings
 from aidevswarm.telegram import HaikuIntentParser, TelegramBot
+from aidevswarm.telegram.bot import _PendingConfirmations
 from aidevswarm.telegram.intent import IntentParseError
 from aidevswarm.tools.kill_switch import InMemoryKillSwitch
 from tests.fakes import InMemoryProjectRepo
@@ -325,6 +326,72 @@ async def test_callback_yes_with_unknown_token_responds_gracefully() -> None:
     update.callback_query.edit_message_text.assert_awaited_once()
     text = update.callback_query.edit_message_text.call_args[0][0]
     assert "expired" in text
+
+
+# ---------------------------------------------------------------------------
+# _PendingConfirmations — bounded + TTL store (no leak on abandoned taps)
+# ---------------------------------------------------------------------------
+
+
+class _FakeClock:
+    """A hand-cranked monotonic clock for deterministic TTL tests."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _abort() -> AbortProject:
+    return AbortProject(project_id=uuid4())
+
+
+def test_pending_roundtrip_is_dict_compatible() -> None:
+    store = _PendingConfirmations()
+    cmd = _abort()
+    store["tok"] = cmd
+    assert "tok" in store
+    assert store["tok"] is cmd
+    assert store.pop("tok") is cmd
+    assert "tok" not in store
+    # popping a missing token returns the default, never raises.
+    assert store.pop("tok") is None
+
+
+def test_pending_expires_after_ttl() -> None:
+    clock = _FakeClock()
+    store = _PendingConfirmations(ttl_seconds=100.0, clock=clock)
+    store["tok"] = _abort()
+    clock.now = 99.0  # still inside the TTL window
+    assert "tok" in store
+    clock.now = 100.1  # now past the TTL
+    assert "tok" not in store
+    assert store.pop("tok") is None
+    assert len(store) == 0
+
+
+def test_pending_evicts_oldest_over_max_entries() -> None:
+    store = _PendingConfirmations(max_entries=3)
+    for i in range(5):
+        store[f"tok{i}"] = _abort()
+    # Only the 3 newest survive; the 2 oldest were evicted.
+    assert len(store) == 3
+    assert "tok0" not in store
+    assert "tok1" not in store
+    assert "tok4" in store
+
+
+def test_pending_abandoned_confirmations_do_not_accumulate() -> None:
+    """The original leak: confirmations the operator never answers."""
+    clock = _FakeClock()
+    store = _PendingConfirmations(ttl_seconds=10.0, max_entries=1000, clock=clock)
+    for i in range(50):
+        clock.now = float(i)  # one abandoned confirmation per "second"
+        store[f"tok{i}"] = _abort()
+    # By now everything older than 10s is gone — the store does not grow
+    # without bound even well under max_entries.
+    assert len(store) <= 11
 
 
 # Suppress unused import warnings for objects only used inside the
