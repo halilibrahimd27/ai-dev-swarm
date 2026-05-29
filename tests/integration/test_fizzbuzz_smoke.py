@@ -34,7 +34,6 @@ import pytest
 from psycopg.types.json import Json
 from psycopg_pool import ConnectionPool
 
-from aidevswarm.db.pool import close_pool, open_pool
 from aidevswarm.db.sessions import PsycopgMilestoneSessionRepo
 from aidevswarm.schemas import AcceptanceCriterion, Milestone, MilestoneSpec
 from aidevswarm.settings import Settings
@@ -45,6 +44,8 @@ from aidevswarm.tools.claude_agent_sdk_tool import (
 from aidevswarm.tools.mcp_config import load_mcp_servers
 from aidevswarm.tools.workspace import Workspace
 
+# ``live_pool`` comes from tests/integration/conftest.py (isolated test DB).
+
 pytestmark = [
     pytest.mark.anthropic,
     pytest.mark.skipif(
@@ -52,18 +53,6 @@ pytestmark = [
         reason="ANTHROPIC_API_KEY not set — skipping live SDK smoke",
     ),
 ]
-
-
-@pytest.fixture(scope="module")
-def live_pool() -> Iterator[ConnectionPool]:
-    os.environ.setdefault("AIDEVSWARM_PG_HOST", "localhost")
-    settings = Settings()
-    try:
-        pool = open_pool(settings)
-    except Exception as exc:
-        pytest.skip(f"Postgres unavailable: {exc}")
-    yield pool
-    close_pool()
 
 
 @pytest.fixture

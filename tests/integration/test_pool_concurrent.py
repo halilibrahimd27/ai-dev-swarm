@@ -7,38 +7,16 @@ stays green in CI without Docker.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
 from psycopg_pool import ConnectionPool
 
-from aidevswarm.db.pool import close_pool, open_pool
-from aidevswarm.settings import Settings
+# ``live_pool`` comes from tests/integration/conftest.py — it opens the
+# process-wide pool against an isolated ``<base>_test`` database and skips
+# the suite if Postgres is unreachable.
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture(scope="module")
-def live_pool() -> Iterator[ConnectionPool]:
-    """Open a small pool against the local Postgres; skip if unreachable.
-
-    Resolves the DB host from the env when set (compose-internal
-    `postgres`), otherwise falls back to `localhost` so tests run from
-    the host against the docker-exposed 5432 port.
-    """
-    import os
-
-    os.environ.setdefault("AIDEVSWARM_PG_HOST", "localhost")
-    settings = Settings()
-    try:
-        pool = open_pool(settings)
-    except Exception as exc:  # pool open includes a connect-and-wait
-        pytest.skip(f"Postgres unavailable: {exc}")
-    try:
-        yield pool
-    finally:
-        close_pool()
 
 
 def _select_one(pool: ConnectionPool) -> int:

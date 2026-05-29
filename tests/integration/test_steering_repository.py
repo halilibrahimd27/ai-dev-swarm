@@ -7,7 +7,6 @@ semantics by issuing two concurrent pulls.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID, uuid4
@@ -16,23 +15,11 @@ import pytest
 from psycopg.types.json import Json
 from psycopg_pool import ConnectionPool
 
-from aidevswarm.db.pool import close_pool, open_pool
-from aidevswarm.settings import Settings
 from aidevswarm.steering.repository import PsycopgSteeringRepo
 
+# ``live_pool`` comes from tests/integration/conftest.py (isolated test DB).
+
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture(scope="module")
-def live_pool() -> Iterator[ConnectionPool]:
-    os.environ.setdefault("AIDEVSWARM_PG_HOST", "localhost")
-    settings = Settings()
-    try:
-        pool = open_pool(settings)
-    except Exception as exc:
-        pytest.skip(f"Postgres unavailable: {exc}")
-    yield pool
-    close_pool()
 
 
 @pytest.fixture

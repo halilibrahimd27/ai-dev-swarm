@@ -6,14 +6,12 @@ and PsycopgTokenLogRepo. Auto-skips when Postgres is unreachable.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 from uuid import uuid4
 
 import pytest
 from psycopg_pool import ConnectionPool
 
-from aidevswarm.db.pool import close_pool, open_pool
 from aidevswarm.db.repositories import (
     PsycopgIdeaEvaluationRepo,
     PsycopgMilestoneRepo,
@@ -30,21 +28,11 @@ from aidevswarm.schemas import (
     ProjectSpec,
     ProjectState,
 )
-from aidevswarm.settings import Settings
+
+# ``live_pool`` is provided by tests/integration/conftest.py — it points at
+# an isolated ``<base>_test`` database, never the operator's live one.
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture(scope="module")
-def live_pool() -> Iterator[ConnectionPool]:
-    os.environ.setdefault("AIDEVSWARM_PG_HOST", "localhost")
-    settings = Settings()
-    try:
-        pool = open_pool(settings)
-    except Exception as exc:
-        pytest.skip(f"Postgres unavailable: {exc}")
-    yield pool
-    close_pool()
 
 
 def _spec() -> ProjectSpec:
@@ -98,16 +86,31 @@ def test_project_update_state_unknown_raises(live_pool: ConnectionPool) -> None:
         repo.update_state(uuid4(), ProjectState.PLANNING)
 
 
+_NON_TERMINAL = {
+    ProjectState.PLANNING,
+    ProjectState.AWAITING_APPROVAL,
+    ProjectState.BUILDING,
+    ProjectState.REPLANNING,
+    ProjectState.INTEGRATION,
+}
+
+
 def test_project_get_active_returns_in_flight_project(
     live_pool: ConnectionPool, project: Project
 ) -> None:
+    # Asserts the get_active CONTRACT without assuming this project is the
+    # only in-flight one: get_active picks the oldest-updated non-terminal
+    # project, so with concurrent projects it need not be ours.
     repo = PsycopgProjectRepo(live_pool)
-    # queued isn't "active"
-    assert repo.get_active() is None or repo.get_active().id != project.id  # type: ignore[union-attr]
+    # A QUEUED project is never reported as in flight.
+    assert all(p.id != project.id for p in repo.list_by_state(ProjectState.PLANNING))
     repo.update_state(project.id, ProjectState.PLANNING)
+    # Now it IS in flight ...
+    assert any(p.id == project.id for p in repo.list_by_state(ProjectState.PLANNING))
+    # ... and get_active returns *some* non-terminal project.
     active = repo.get_active()
     assert active is not None
-    assert active.id == project.id
+    assert active.state in _NON_TERMINAL
 
 
 def test_project_set_github_repo(live_pool: ConnectionPool, project: Project) -> None:
