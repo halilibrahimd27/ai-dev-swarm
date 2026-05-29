@@ -128,14 +128,22 @@ class ClaudeAgentSDKTool:
         *,
         max_turns: int | None = None,
         max_budget_usd: float | None = None,
+        repair_context: str | None = None,
     ) -> SDKResult:
-        """Drive the SDK to completion and persist the session row."""
+        """Drive the SDK to completion and persist the session row.
+
+        ``repair_context`` (set by the build crew's CI-repair loop) carries
+        the previous attempt's exact lint/type/test failure so the resumed
+        agent fixes those specific errors instead of re-reading an
+        unchanged prompt.
+        """
         return asyncio.run(
             self._arun(
                 milestone,
                 workspace,
                 max_turns=max_turns or self._settings.sdk_max_turns,
                 max_budget_usd=max_budget_usd or self._settings.sdk_max_budget_usd,
+                repair_context=repair_context,
             )
         )
 
@@ -232,8 +240,23 @@ class ClaudeAgentSDKTool:
         # no pattern means "all tools". (claude-agent-sdk 0.2.87)
         return {"PreToolUse": [HookMatcher(hooks=[_inject])]}  # type: ignore[list-item]
 
-    def task_prompt(self, milestone: Milestone) -> str:
-        """The user-facing prompt the SDK receives as the first turn."""
+    def task_prompt(self, milestone: Milestone, repair_context: str | None = None) -> str:
+        """The user-facing prompt the SDK receives as the first turn.
+
+        When ``repair_context`` is set the CI gate failed on the previous
+        attempt; the agent (resumed on its own session) is told to fix
+        exactly those errors rather than re-deriving the milestone.
+        """
+        if repair_context:
+            return (
+                "The CI gate just FAILED for this milestone. The code on disk does"
+                " not pass lint / type-check / tests. Fix EXACTLY the errors below"
+                " — make the smallest change that turns CI green — then stop. Do"
+                " not start new work.\n\n"
+                "PREVIOUS CI FAILURE:\n"
+                f"{repair_context}\n\n"
+                f"Milestone for reference: {milestone.title}"
+            )
         return (
             f"Milestone: {milestone.title}\n"
             f"Acceptance criteria + technical note:\n"
@@ -250,6 +273,7 @@ class ClaudeAgentSDKTool:
         *,
         max_turns: int,
         max_budget_usd: float,
+        repair_context: str | None = None,
     ) -> SDKResult:
         prev = self._session_repo.latest_for(milestone.id, self.role)
         resume = prev.session_id if prev else None
@@ -272,7 +296,7 @@ class ClaudeAgentSDKTool:
 
             final: ResultMessage | None = None
             async with ClaudeSDKClient(options=options) as client:
-                await client.query(self.task_prompt(milestone))
+                await client.query(self.task_prompt(milestone, repair_context))
                 async for msg in client.receive_messages():
                     # Stream the agent's turn-by-turn work to the live
                     # transcript (the web UI) as it happens, not just the
@@ -430,9 +454,11 @@ class ClaudeAgentSDKTesterTool(ClaudeAgentSDKTool):
     # repoint via AIDEVSWARM_MODEL_FAST if test quality needs the strong
     # model.
     model_tier = "fast"
-    # Bash is namespace-restricted so the Tester can run pytest but
-    # not arbitrary shell.
-    allowed_tools = ("Read", "Write", "Edit", "Glob", "Grep", "Bash(pytest:*)")
+    # Bash is namespace-restricted so the Tester can run pytest + ruff (to
+    # lint its own test files before handoff) but not arbitrary shell.
+    # Without ruff here, an unused import the Tester leaves behind only
+    # surfaces at the CI gate — the exact failure that BLOCKED a project.
+    allowed_tools = ("Read", "Write", "Edit", "Glob", "Grep", "Bash(pytest:*)", "Bash(ruff:*)")
     _template_name = "tester"
 
 

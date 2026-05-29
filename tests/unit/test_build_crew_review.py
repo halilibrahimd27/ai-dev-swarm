@@ -3,9 +3,9 @@
 The Reviewer is the only LLM quality gate after the mechanical
 Developer + Tester + CI gates. Its output can be empty / prose-wrapped /
 fenced / slightly-malformed JSON. The build crew gives it ONE retry on an
-unparseable verdict before defaulting to a PASS (since the mechanical
-gates already succeeded), so a single transient bad emit can't silently
-bypass the gate.
+unparseable verdict, then FAILS the milestone (it must not silently ship
+without a semantic sign-off — the mechanical gates only prove the code
+lints/types/tests-green, not that it does the right thing).
 """
 
 from __future__ import annotations
@@ -133,7 +133,7 @@ def test_review_retries_once_then_returns_parsed_verdict() -> None:
     assert result is verdict
 
 
-def test_review_passes_after_two_unparseable_attempts() -> None:
+def test_review_fails_after_two_unparseable_attempts() -> None:
     crew = _crew()
     calls: list[int] = []
 
@@ -144,5 +144,7 @@ def test_review_passes_after_two_unparseable_attempts() -> None:
     crew._run_reviewer = stub  # type: ignore[method-assign]
     result = _review(crew)
     assert len(calls) == 2  # initial attempt + exactly one retry, no more
-    assert result.success is True
+    # No parseable verdict => FAIL (was a silent PASS before the fix).
+    assert result.success is False
     assert "unparseable after a retry" in result.summary
+    assert result.failure_reason is not None

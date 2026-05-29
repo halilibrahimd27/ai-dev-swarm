@@ -100,6 +100,8 @@ class CrewaiBuildCrew:
 
         ci = sandbox.run_ci(str(workspace.root))
         if not ci.passed:
+            dev, ci = self._repair_ci(milestone, workspace, sandbox, dev, ci)
+        if not ci.passed:
             self._log.info("build.ci_failed", exit_code=ci.exit_code)
             self._emit(milestone, "ci_failed", f"CI gate failed (exit {ci.exit_code})")
             return _failure_from_ci(ci, dev=dev, tester=tester)
@@ -112,6 +114,43 @@ class CrewaiBuildCrew:
             f"Reviewer: {'APPROVED' if verdict.success else 'REJECTED'} — {verdict.summary}",
         )
         return verdict
+
+    def _repair_ci(
+        self,
+        milestone: Milestone,
+        workspace: Workspace,
+        sandbox: Sandbox,
+        dev: SDKResult,
+        ci: SandboxResult,
+    ) -> tuple[SDKResult, SandboxResult]:
+        """Re-invoke the Developer with the exact CI failure and re-run CI.
+
+        Bounded by ``settings.ci_repair_attempts``. The Developer resumes
+        its own session, so a trivial fix (e.g. an unused import the Tester
+        left behind) self-heals in-attempt instead of burning a whole
+        milestone retry on an unchanged prompt. Returns the latest
+        ``(dev, ci)`` — the caller decides PASS/FAIL from ``ci.passed``.
+        """
+        attempts = max(0, self._settings.ci_repair_attempts)
+        for i in range(1, attempts + 1):
+            self._log.info("build.ci_repair", milestone=milestone.title, attempt=i, of=attempts)
+            self._emit(
+                milestone,
+                "ci_failed",
+                f"CI gate failed (exit {ci.exit_code}); repair attempt {i}/{attempts}",
+            )
+            dev = self._dev_tool.run_sync(
+                milestone, workspace, repair_context=_ci_repair_context(ci)
+            )
+            if not dev.success:
+                # The repair invocation itself errored (budget/turns) — stop
+                # repairing; the caller reports the CI failure.
+                break
+            ci = sandbox.run_ci(str(workspace.root))
+            if ci.passed:
+                self._emit(milestone, "ci_repaired", f"CI gate passed after repair attempt {i}")
+                break
+        return dev, ci
 
     def _emit(self, milestone: Milestone, kind: str, text: str) -> None:
         """Publish a build-stage marker to the live transcript (best-effort)."""
@@ -172,13 +211,20 @@ class CrewaiBuildCrew:
         if verdict is not None:
             return verdict
 
-        # Still unparseable after a retry. The mechanical gates
-        # (Developer + Tester + CI) already PASSED, so accept rather than
-        # spiral on "missing required fields".
-        self._log.warning("build.reviewer_unparseable_pass", milestone=milestone.title)
+        # Still unparseable after a retry. The Reviewer is the ONLY semantic
+        # gate that the acceptance criteria were genuinely met (mechanical
+        # gates only prove the code lints/types/tests-green, not that it does
+        # the right thing). A model that reliably emits malformed JSON must
+        # NOT silently ship the milestone — fail instead, so it retries or
+        # blocks honestly and a human looks.
+        self._log.warning("build.reviewer_unparseable_fail", milestone=milestone.title)
         return MilestoneBuildResult(
-            success=True,
-            summary="reviewer verdict unparseable after a retry; accepted (Developer+Tester+CI passed)",
+            success=False,
+            summary="reviewer verdict unparseable after a retry",
+            failure_reason=(
+                "Reviewer emitted no parseable verdict after a retry; refusing to "
+                "auto-approve without a semantic sign-off."
+            ),
             tokens_used=dev.turns + tester.turns,
         )
 
@@ -261,6 +307,19 @@ class CrewaiBuildCrew:
 # ----------------------------------------------------------------------
 # Tiny helpers — testable in isolation
 # ----------------------------------------------------------------------
+
+
+def _ci_repair_context(ci: SandboxResult, *, limit: int = 3000) -> str:
+    """The CI failure text handed to the Developer's repair invocation.
+
+    Keeps the TAIL of stdout/stderr (where ruff/mypy/pytest print the
+    actual errors) bounded so a huge gate log can't blow the prompt.
+    """
+    parts = [p for p in (ci.stdout, ci.stderr) if p and p.strip()]
+    blob = "\n".join(parts).strip() or f"exit_code={ci.exit_code}"
+    if len(blob) > limit:
+        blob = "…(truncated)…\n" + blob[-limit:]
+    return blob
 
 
 def _failure_from_sdk(result: SDKResult, *, phase: str) -> MilestoneBuildResult:

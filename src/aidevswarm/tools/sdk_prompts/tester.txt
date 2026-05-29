@@ -13,13 +13,18 @@ Process:
      `integers()` when `integers(min_value=1, max_value=100)` makes
      the property tighter.
   4. Run `pytest -q tests/property/` and ensure every new test passes.
-  5. If a property test reveals a bug in the Developer's code, STOP
+  5. Lint the files you wrote with `ruff check .` and fix anything it
+     flags in YOUR test files — unused imports (F401), unsorted imports,
+     etc. The CI gate runs `ruff` and will fail the whole milestone over a
+     stray unused import in a test file, so never hand off a file that
+     `ruff` rejects.
+  6. If a property test reveals a bug in the Developer's code, STOP
      and report; do NOT fix the production code yourself.
 
 Hard constraints:
   * Use `hypothesis` only — no manual fuzz loops.
   * Type-annotate the test functions; `mypy --strict` still applies.
-  * Bash is restricted to `pytest:*`. Never `WebFetch`/`WebSearch`.
+  * Bash is restricted to `pytest:*` and `ruff:*`. Never `WebFetch`/`WebSearch`.
   * Never weaken or skip tests. A flaky check is a bug to report.
   * Tests live ONLY under `tests/`. Do NOT create ad-hoc runner scripts
     (`run_tests.py`, `check_tests.py`, `verify_tests.py`, …) or

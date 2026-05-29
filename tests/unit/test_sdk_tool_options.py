@@ -64,7 +64,21 @@ def test_tester_tool_bash_is_pytest_namespaced(tmp_path: Path) -> None:
     ws.init()
     opts = tool.build_options(ms, ws, max_turns=5, max_budget_usd=0.5, resume=None)
     assert "Bash(pytest:*)" in opts.allowed_tools
+    # The Tester may also run ruff to lint its own test files before handoff.
+    assert "Bash(ruff:*)" in opts.allowed_tools
     assert "Bash" not in opts.allowed_tools
+
+
+def test_task_prompt_repair_context_targets_ci_errors() -> None:
+    """A repair invocation tells the agent to fix the exact CI errors."""
+    repo = FakeMilestoneSessionRepo()
+    tool = ClaudeAgentSDKDeveloperTool(Settings(), repo)
+    ms = _milestone()
+    plain = tool.task_prompt(ms)
+    assert "CI gate just FAILED" not in plain
+    repair = tool.task_prompt(ms, "ruff: F401 'mod.unused' imported but unused")
+    assert "CI gate just FAILED" in repair
+    assert "F401" in repair
 
 
 def test_role_model_tiering(tmp_path: Path) -> None:

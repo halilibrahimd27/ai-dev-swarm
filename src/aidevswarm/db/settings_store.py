@@ -151,6 +151,14 @@ EDITABLE_SETTINGS: tuple[EditableSetting, ...] = (
         minimum=0,
         help="USD cap the SDK enforces per invocation (it aborts at this).",
     ),
+    EditableSetting(
+        "ci_repair_attempts",
+        "CI repair attempts",
+        "Build",
+        "int",
+        minimum=0,
+        help="On a CI failure, re-invoke the Developer with the exact errors and re-run CI up to this many times before the milestone counts a failed attempt. 0 disables.",
+    ),
 )
 
 _BY_KEY: dict[str, EditableSetting] = {s.key: s for s in EDITABLE_SETTINGS}

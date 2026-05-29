@@ -155,6 +155,12 @@ class Settings(BaseSettings):
     # aborts at the budget cap regardless.
     sdk_max_turns: int = Field(default=80, validation_alias="AIDEVSWARM_SDK_MAX_TURNS")
     sdk_max_budget_usd: float = Field(default=5.0, validation_alias="AIDEVSWARM_SDK_MAX_BUDGET_USD")
+    # When the CI gate fails, re-invoke the Developer with the exact
+    # lint/type/test errors and re-run CI, up to this many times, BEFORE
+    # the milestone counts a failed attempt. A trivial fix (an unused
+    # import the Tester left behind) then self-heals in-attempt instead of
+    # burning a whole retry on an unchanged prompt. 0 disables the loop.
+    ci_repair_attempts: int = Field(default=2, validation_alias="AIDEVSWARM_CI_REPAIR_ATTEMPTS")
 
     # --- Phase 4 replanner ------------------------------------------------
     # Auto-split fires BEFORE the LLM-driven replanner crew runs. It's a
@@ -206,6 +212,14 @@ class Settings(BaseSettings):
     # value; there's no opt-out. Telegram bot uses polling (no port).
     api_host: str = Field(default="127.0.0.1", validation_alias="AIDEVSWARM_API_HOST")
     api_port: int = Field(default=8080, validation_alias="AIDEVSWARM_API_PORT")
+    # Optional shared bearer token. When set, every state-changing request
+    # (POST/PUT/PATCH/DELETE — i.e. /api/commands) must carry
+    # `Authorization: Bearer <token>`. Leave blank to rely on the loopback
+    # bind + Origin guard alone. It is a SECRET — never returned by
+    # /api/settings, never in the editable allow-list. The web UI receives
+    # it via a <meta> tag injected into index.html at serve time (loopback
+    # only), so the operator's own browser can authenticate.
+    api_token: SecretStr | None = Field(default=None, validation_alias="AIDEVSWARM_API_TOKEN")
     # Comma-separated list in the env var; the field_validator below
     # parses it into list[int]. NoDecode disables pydantic-settings's
     # built-in JSON list decoder so an empty string `""` doesn't error
@@ -223,6 +237,14 @@ class Settings(BaseSettings):
         default_factory=lambda: list(_DEFAULT_REDACT_PATTERNS),
         validation_alias="AIDEVSWARM_REDACT_PATTERNS",
     )
+
+    @field_validator("api_token", mode="before")
+    @classmethod
+    def _empty_token_is_none(cls, v: object) -> object:
+        # An unset env var arrives as "" — treat that as "no token".
+        if v is None or (isinstance(v, str) and v.strip() == ""):
+            return None
+        return v
 
     @field_validator("api_host")
     @classmethod
