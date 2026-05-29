@@ -9,108 +9,113 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <header>
-    <h1>ai-dev-swarm</h1>
-    <span class="tagline">autonomous dev swarm</span>
-    <div class="header-right">
+  <header class="topbar">
+    <div class="brand"><span class="logo">ai-dev-swarm</span><span class="tagline">autonomous dev swarm</span></div>
+    <div class="topbar-right">
       <span class="chip" id="spend-today" title="estimated spend today (UTC)">today $0.00</span>
       <span class="chip" id="spend-all" title="all-time estimated spend">all-time $0.00</span>
       <span id="ws-status" class="status">connecting…</span>
     </div>
   </header>
 
-  <main class="grid">
-    <!-- (a) Projects + detail -->
-    <section id="state-pane" aria-label="Projects">
-      <h2>projects</h2>
-      <ul id="project-list" class="project-list"></ul>
+  <div class="app">
+    <nav class="sidenav" aria-label="Primary">
+      <button class="navitem active" data-route="dashboard"><span class="nav-ic">▦</span> Dashboard</button>
+      <button class="navitem" data-route="transcript"><span class="nav-ic">▤</span> Transcript</button>
+      <button class="navitem" data-route="evaluations"><span class="nav-ic">★</span> Evaluations</button>
+      <button class="navitem" data-route="spend"><span class="nav-ic">$</span> Spend</button>
+      <button class="navitem" data-route="settings"><span class="nav-ic">⚙</span> Settings</button>
+      <button class="navitem" data-route="activity"><span class="nav-ic">≣</span> Activity</button>
+    </nav>
 
-      <div id="project-detail" class="project-detail" hidden>
-        <h3 id="detail-name"></h3>
-        <div id="detail-status" class="detail-status"></div>
-        <div id="detail-spend" class="detail-spend"></div>
-        <div id="detail-milestones">
-          <h4>milestones <small id="detail-ms-count"></small></h4>
-          <ol id="detail-ms-list" class="milestone-list"></ol>
+    <main class="content">
+      <!-- ───────────────────────────────────────── Dashboard -->
+      <section class="view" id="view-dashboard">
+        <div class="view-head">
+          <h2>Dashboard</h2>
+          <div class="global-actions">
+            <button data-intent="ideate_now">ideate now</button>
+            <button data-intent="kill_switch" class="danger">kill switch</button>
+          </div>
         </div>
-      </div>
-    </section>
+        <p class="view-hint">Pick a project to watch its agents work. “ideate now” fires the ideation crew until an idea clears the gate.</p>
+        <ul id="project-list" class="project-list"></ul>
+      </section>
 
-    <!-- (b) Transcript / Evaluations -->
-    <section id="center-pane" aria-label="Transcript and evaluations">
-      <div class="pane-head">
-        <div class="tabs">
-          <button id="tab-transcript" class="tab active" data-view="transcript">transcript</button>
-          <button id="tab-evals" class="tab" data-view="evaluations">idea evaluations</button>
+      <!-- ───────────────────────────────────────── Transcript -->
+      <section class="view" id="view-transcript" hidden>
+        <div class="project-bar" id="project-bar" hidden>
+          <div class="pb-left">
+            <h2 id="pb-name"></h2>
+            <div id="pb-status" class="pb-status"></div>
+          </div>
+          <div class="pb-actions">
+            <button data-intent="approve">approve</button>
+            <button data-intent="pause_project">pause</button>
+            <button data-intent="resume_project">resume</button>
+            <button data-intent="abort_project" class="danger">abort</button>
+          </div>
         </div>
+        <ol id="pb-milestones" class="pb-milestones"></ol>
+
         <div class="transcript-toolbar" id="transcript-toolbar">
           <div class="seg" role="group" aria-label="view mode">
-            <button type="button" class="seg-btn active" id="mode-conversation" data-mode="conversation">conversation</button>
-            <button type="button" class="seg-btn" id="mode-technical" data-mode="technical">technical</button>
+            <button type="button" class="seg-btn active" data-mode="conversation">conversation</button>
+            <button type="button" class="seg-btn" data-mode="technical">technical</button>
           </div>
           <label class="toggle"><input type="checkbox" id="autoscroll" checked /> autoscroll</label>
           <select id="role-filter" aria-label="filter by role"><option value="">all roles</option></select>
           <button id="clear-transcript" type="button" class="ghost">clear</button>
         </div>
-      </div>
 
-      <div id="transcript-view">
-        <span id="transcript-label" class="view-label">(no project selected)</span>
-        <ol id="transcript" class="transcript" aria-live="polite"></ol>
-        <p id="transcript-empty" class="empty-hint">Select a project to watch its agents work in real time.</p>
+        <ol id="transcript" class="transcript mode-conversation" aria-live="polite"></ol>
+        <p id="transcript-empty" class="empty-hint">Select a project from the Dashboard to watch its agents converse.</p>
+
+        <div class="rescope-row">
+          <input id="rescope-input" type="text" placeholder="rescope this project…" />
+          <button data-intent="rescope" class="danger">rescope</button>
+        </div>
         <form id="steer-form" class="steer">
           <input id="steer-input" type="text" placeholder="steer the agents — drop a note (fire-and-forget)…" autocomplete="off" />
           <button type="submit">send</button>
         </form>
-      </div>
+      </section>
 
-      <div id="evaluations-view" hidden>
+      <!-- ───────────────────────────────────────── Evaluations -->
+      <section class="view" id="view-evaluations" hidden>
+        <div class="view-head"><h2>Idea evaluations</h2></div>
         <p class="view-hint">Every idea the Critic scored. An idea must score ≥ the gate AND be novel to become a project.</p>
         <div id="eval-list" class="eval-list"></div>
-      </div>
-    </section>
+      </section>
 
-    <!-- (c) Controls + spend -->
-    <section id="controls-pane" aria-label="Operator controls">
-      <h2>controls</h2>
-      <fieldset>
-        <legend>start work</legend>
-        <button data-intent="ideate_now">ideate now</button>
-        <small>fires the ideation crew (up to 5 rounds) until an idea clears the gate.</small>
-      </fieldset>
-      <fieldset>
-        <legend>selected project</legend>
-        <div class="btn-row">
-          <button data-intent="approve">approve</button>
-          <button data-intent="pause_project">pause</button>
-          <button data-intent="resume_project">resume</button>
-          <button data-intent="abort_project" class="danger">abort</button>
+      <!-- ───────────────────────────────────────── Spend -->
+      <section class="view" id="view-spend" hidden>
+        <div class="view-head"><h2>Spend</h2></div>
+        <div class="spend-grid">
+          <div class="spend-cell"><span class="spend-num" id="spend-today-big">$0.00</span><span class="spend-cap">today</span></div>
+          <div class="spend-cell"><span class="spend-num" id="spend-all-big">$0.00</span><span class="spend-cap">all-time</span></div>
         </div>
-      </fieldset>
-      <fieldset>
-        <legend>scope</legend>
-        <input id="rescope-input" type="text" placeholder="new scope…" />
-        <button data-intent="rescope" class="danger">rescope</button>
-      </fieldset>
-      <fieldset>
-        <legend>global</legend>
-        <button data-intent="kill_switch" class="danger">kill switch</button>
-      </fieldset>
+        <h4>by role (today)</h4>
+        <table class="spend-table"><tbody id="spend-role-rows"></tbody></table>
+        <h4>by project (all-time)</h4>
+        <table class="spend-table"><tbody id="spend-project-rows"></tbody></table>
+      </section>
 
-      <h2 class="section-gap">spend</h2>
-      <div class="spend-grid">
-        <div class="spend-cell"><span class="spend-num" id="spend-today-big">$0.00</span><span class="spend-cap">today</span></div>
-        <div class="spend-cell"><span class="spend-num" id="spend-all-big">$0.00</span><span class="spend-cap">all-time</span></div>
-      </div>
-      <h4>by role (today)</h4>
-      <table class="spend-table"><tbody id="spend-role-rows"></tbody></table>
-      <h4>by project (all-time)</h4>
-      <table class="spend-table"><tbody id="spend-project-rows"></tbody></table>
+      <!-- ───────────────────────────────────────── Settings -->
+      <section class="view" id="view-settings" hidden>
+        <div class="view-head"><h2>Settings</h2></div>
+        <p class="view-hint">Operational limits — applied live unless marked <span class="restart-tag">restart</span>. Secrets, credentials, hosts and pool sizes stay in <code>.env</code>.</p>
+        <div id="settings-form" class="settings-form"></div>
+      </section>
 
-      <h2 class="section-gap">activity</h2>
-      <pre id="result-log" class="result-log" aria-live="polite"></pre>
-    </section>
-  </main>
+      <!-- ───────────────────────────────────────── Activity -->
+      <section class="view" id="view-activity" hidden>
+        <div class="view-head"><h2>Activity</h2></div>
+        <p class="view-hint">Command results + connection events (most recent first).</p>
+        <pre id="result-log" class="result-log" aria-live="polite"></pre>
+      </section>
+    </main>
+  </div>
 
   <script src="/app.js" defer></script>
 </body>

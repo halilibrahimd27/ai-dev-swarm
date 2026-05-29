@@ -1,50 +1,86 @@
 // ai-dev-swarm web panel — vanilla JS, no build step, no CDNs.
 //
-// Streams SSE (/sse/projects, /sse/transcript/{id}, /sse/metrics), polls
-// /api/projects, /api/spend, /api/ideas, and POSTs commands to
-// /api/commands. Two views: the live agent transcript (chat style) and
-// the idea-evaluation log (why each idea was accepted/rejected). The
-// right rail shows today + all-time spend, per-role and per-project.
+// App shell: a left nav routes between views (Dashboard / Transcript /
+// Evaluations / Spend / Settings / Activity) via the URL hash. Data comes
+// from SSE (/sse/transcript/{id}) + polled REST (/api/projects, /api/spend,
+// /api/ideas, /api/settings) and commands POST to /api/commands.
 
 (function () {
   "use strict";
 
+  const ROUTES = ["dashboard", "transcript", "evaluations", "spend", "settings", "activity"];
+
   const state = {
     projects: [],
     selected: null,
+    route: "dashboard",
     transcriptStream: null,
     roleFilter: "",
     autoscroll: true,
-    view: "transcript",
     mode: "conversation", // "conversation" (clean) | "technical" (raw firehose)
     streamingNode: null,
     streamingRole: null,
     knownRoles: new Set(),
-    seenIds: new Set(), // de-dupe history-replay vs live SSE
-    fails: 0, // consecutive fetch failures, for graceful backoff
+    seenIds: new Set(),
+    settingsLoaded: false,
+    fails: 0,
     lastError: "",
   };
-
-  // Build markers (carry a milestone/CI/review status, not agent chatter).
-  const MARKER_KINDS = new Set([
-    "milestone_start",
-    "ci_passed",
-    "ci_failed",
-    "review_done",
-  ]);
 
   const POLL_OK = 5000;
   const POLL_MAX = 30000;
 
+  // Build markers carry a milestone/CI/review status, not agent chatter.
+  const MARKER_KINDS = new Set(["milestone_start", "ci_passed", "ci_failed", "review_done"]);
+
   document.addEventListener("DOMContentLoaded", () => {
+    bindNav();
     bindControls();
     bindSteerForm();
     bindToolbar();
-    bindTabs();
+    window.addEventListener("hashchange", () => route(currentHashRoute()));
+    route(currentHashRoute());
     tick();
   });
 
-  // One combined poll loop with backoff on failure (no error spam).
+  // ------------------------------------------------------------------
+  // Routing
+  // ------------------------------------------------------------------
+
+  function currentHashRoute() {
+    const r = (location.hash || "").replace(/^#\/?/, "");
+    return ROUTES.includes(r) ? r : "dashboard";
+  }
+
+  function bindNav() {
+    document.querySelectorAll(".navitem").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        location.hash = "#/" + btn.dataset.route;
+      });
+    });
+  }
+
+  function route(name) {
+    state.route = name;
+    document.querySelectorAll(".navitem").forEach((b) => {
+      b.classList.toggle("active", b.dataset.route === name);
+    });
+    document.querySelectorAll(".view").forEach((v) => {
+      v.hidden = v.id !== "view-" + name;
+    });
+    if (name === "evaluations") loadIdeas();
+    if (name === "settings" && !state.settingsLoaded) loadSettings();
+    if (name === "transcript") scrollIfPinned();
+  }
+
+  function go(name) {
+    location.hash = "#/" + name;
+  }
+
+  // ------------------------------------------------------------------
+  // Poll loop (projects + spend) with backoff
+  // ------------------------------------------------------------------
+
   async function tick() {
     const ok = await refreshAll();
     state.fails = ok ? 0 : state.fails + 1;
@@ -61,8 +97,8 @@
       state.projects = projects;
       renderProjects();
       renderSpend(spend);
-      if (state.selected) renderDetail(state.selected);
-      if (state.view === "evaluations") await loadIdeas();
+      if (state.selected) renderProjectBar(state.selected);
+      if (state.route === "evaluations") await loadIdeas();
       setStatus("connected");
       state.lastError = "";
       return true;
@@ -80,7 +116,7 @@
   }
 
   // ------------------------------------------------------------------
-  // Projects + detail
+  // Dashboard: project list
   // ------------------------------------------------------------------
 
   function renderProjects() {
@@ -94,24 +130,41 @@
       return;
     }
     for (const p of state.projects) {
-      const li = document.createElement("li");
-      li.className = "project-card" + (state.selected === p.id ? " active" : "");
-      const name = document.createElement("span");
-      name.className = "project-name";
-      name.textContent = p.name;
-      const badge = document.createElement("span");
-      badge.className = "badge state-" + p.state;
-      badge.textContent = p.state.replace(/_/g, " ");
-      li.appendChild(name);
-      li.appendChild(badge);
-      li.addEventListener("click", () => selectProject(p.id));
-      ul.appendChild(li);
+      ul.appendChild(buildProjectCard(p));
     }
+  }
+
+  function buildProjectCard(p) {
+    const li = document.createElement("li");
+    li.className = "project-card" + (state.selected === p.id ? " active" : "");
+    const top = document.createElement("div");
+    top.className = "pc-top";
+    const name = document.createElement("span");
+    name.className = "project-name";
+    name.textContent = p.name;
+    const badge = document.createElement("span");
+    badge.className = "badge state-" + p.state;
+    badge.textContent = p.state.replace(/_/g, " ");
+    top.appendChild(name);
+    top.appendChild(badge);
+    li.appendChild(top);
+    if (p.status_detail) {
+      const why = document.createElement("div");
+      why.className = "why" + (p.state === "blocked" ? " why-blocked" : "");
+      why.textContent = p.status_detail;
+      li.appendChild(why);
+    }
+    li.addEventListener("click", () => selectProject(p.id));
+    return li;
   }
 
   function projectById(id) {
     return state.projects.find((p) => p.id === id) || null;
   }
+
+  // ------------------------------------------------------------------
+  // Project selection → Transcript view
+  // ------------------------------------------------------------------
 
   async function selectProject(id) {
     state.selected = id;
@@ -119,19 +172,19 @@
     state.streamingRole = null;
     state.seenIds = new Set();
     renderProjects();
-    renderDetail(id);
+    renderProjectBar(id);
+    go("transcript");
     document.getElementById("transcript-empty").hidden = true;
-    document.getElementById("transcript-label").textContent = "(" + id.slice(0, 8) + ")";
     if (state.transcriptStream) state.transcriptStream.close();
     const list = document.getElementById("transcript");
     list.innerHTML = "";
-    // 1) Replay the persisted history so a refresh shows the whole project.
+    // 1) Replay persisted history so a refresh shows the whole project.
     try {
       const history = await fetchJson("/api/transcript/" + id);
-      if (state.selected !== id) return; // selection changed mid-load
+      if (state.selected !== id) return;
       for (const entry of history) renderEntry(entry);
     } catch (err) {
-      /* non-fatal — fall through to the live stream */
+      /* non-fatal */
     }
     if (state.selected !== id) return;
     // 2) Attach the live stream for NEW entries (de-duped by id).
@@ -139,23 +192,23 @@
     state.transcriptStream.onmessage = appendTranscript;
   }
 
-  async function renderDetail(id) {
+  async function renderProjectBar(id) {
     const p = projectById(id);
-    const box = document.getElementById("project-detail");
+    const bar = document.getElementById("project-bar");
     if (!p) {
-      box.hidden = true;
+      bar.hidden = true;
       return;
     }
-    box.hidden = false;
-    document.getElementById("detail-name").textContent = p.name;
-    const status = document.getElementById("detail-status");
+    bar.hidden = false;
+    document.getElementById("pb-name").textContent = p.name;
+    const status = document.getElementById("pb-status");
     status.innerHTML = "";
     const badge = document.createElement("span");
     badge.className = "badge state-" + p.state;
     badge.textContent = p.state.replace(/_/g, " ");
     status.appendChild(badge);
     if (p.status_detail) {
-      const why = document.createElement("div");
+      const why = document.createElement("span");
       why.className = "why" + (p.state === "blocked" ? " why-blocked" : "");
       why.textContent = p.status_detail;
       status.appendChild(why);
@@ -169,11 +222,14 @@
   }
 
   function renderMilestones(milestones) {
-    const list = document.getElementById("detail-ms-list");
-    const count = document.getElementById("detail-ms-count");
+    const list = document.getElementById("pb-milestones");
     list.innerHTML = "";
+    if (!milestones.length) return;
     const done = milestones.filter((m) => m.state === "done").length;
-    count.textContent = milestones.length ? `(${done}/${milestones.length} done)` : "(none yet)";
+    const head = document.createElement("li");
+    head.className = "ms-head";
+    head.textContent = `milestones ${done}/${milestones.length} done`;
+    list.appendChild(head);
     for (const m of milestones) {
       const li = document.createElement("li");
       li.className = "milestone state-" + m.state;
@@ -193,7 +249,7 @@
   }
 
   // ------------------------------------------------------------------
-  // Transcript (chat) — SSE
+  // Transcript (chat) — SSE + history replay
   // ------------------------------------------------------------------
 
   function appendTranscript(e) {
@@ -206,7 +262,6 @@
     renderEntry(entry);
   }
 
-  // Shared by history replay and the live stream.
   function renderEntry(entry) {
     if (entry.id) {
       if (state.seenIds.has(entry.id)) return;
@@ -264,8 +319,6 @@
     const body = document.createElement("div");
     body.className = "msg-body";
     if (kind === "tool_use" || kind === "tool_done") {
-      // Conversation mode shows a readable one-liner; technical mode shows
-      // the raw tool name + args. CSS toggles which is visible.
       const human = document.createElement("span");
       human.className = "tool-human";
       human.textContent = humanizeTool(entry.text, entry.extra && entry.extra.args);
@@ -290,7 +343,6 @@
     return li;
   }
 
-  // Centered status pill for milestone/CI/review markers.
   function buildMarker(entry, kind) {
     const li = document.createElement("li");
     li.className = "marker kind-" + kind;
@@ -323,7 +375,6 @@
     return map[kind] || kind.replace(/_/g, " ");
   }
 
-  // Turn a raw SDK tool call into a human one-liner for conversation mode.
   function humanizeTool(name, argsStr) {
     const n = (name || "tool").trim();
     const args = argsStr || "";
@@ -356,7 +407,11 @@
   }
 
   function unescapeJson(s) {
-    return (s || "").replace(/\\n/g, " ").replace(/\\t/g, " ").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+    return (s || "")
+      .replace(/\\n/g, " ")
+      .replace(/\\t/g, " ")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\");
   }
 
   function truncate(s, n) {
@@ -382,7 +437,7 @@
   function scrollIfPinned() {
     if (!state.autoscroll) return;
     const list = document.getElementById("transcript");
-    list.scrollTop = list.scrollHeight;
+    if (list) list.scrollTop = list.scrollHeight;
   }
 
   // ------------------------------------------------------------------
@@ -419,15 +474,14 @@
   function buildEvalCard(ev) {
     const card = document.createElement("div");
     card.className = "eval-card " + (ev.accepted ? "accepted" : "rejected");
-
     const head = document.createElement("div");
     head.className = "eval-head";
-    const title = document.createElement("span");
-    title.className = "eval-title";
-    title.textContent = ev.title;
     const verdict = document.createElement("span");
     verdict.className = "eval-verdict " + (ev.accepted ? "v-accepted" : "v-rejected");
     verdict.textContent = ev.accepted ? "ACCEPTED" : "rejected";
+    const title = document.createElement("span");
+    title.className = "eval-title";
+    title.textContent = ev.title;
     const total = document.createElement("span");
     total.className = "eval-total";
     total.textContent = ev.total + "/100";
@@ -492,7 +546,6 @@
     document.getElementById("spend-all").textContent = "all-time $" + all;
     document.getElementById("spend-today-big").textContent = "$" + today;
     document.getElementById("spend-all-big").textContent = "$" + all;
-
     fillSpendRows("spend-role-rows", (s.by_role || []).map((r) => [r.role, r.tokens, r.cost_usd]));
     fillSpendRows(
       "spend-project-rows",
@@ -532,25 +585,96 @@
   }
 
   // ------------------------------------------------------------------
-  // Tabs
+  // Settings (operator-editable operational knobs)
   // ------------------------------------------------------------------
 
-  function bindTabs() {
-    document.querySelectorAll(".tab").forEach((btn) => {
-      btn.addEventListener("click", () => switchView(btn.dataset.view));
-    });
+  async function loadSettings() {
+    let rows;
+    try {
+      rows = await fetchJson("/api/settings");
+    } catch (err) {
+      return;
+    }
+    state.settingsLoaded = true;
+    const form = document.getElementById("settings-form");
+    form.innerHTML = "";
+    const groups = {};
+    for (const r of rows) (groups[r.group] = groups[r.group] || []).push(r);
+    for (const group of Object.keys(groups)) {
+      const fs = document.createElement("fieldset");
+      const lg = document.createElement("legend");
+      lg.textContent = group;
+      fs.appendChild(lg);
+      for (const item of groups[group]) fs.appendChild(buildSettingRow(item));
+      form.appendChild(fs);
+    }
   }
 
-  function switchView(view) {
-    state.view = view;
-    document.querySelectorAll(".tab").forEach((b) => {
-      b.classList.toggle("active", b.dataset.view === view);
+  function buildSettingRow(item) {
+    const row = document.createElement("div");
+    row.className = "setting-row";
+
+    const label = document.createElement("label");
+    label.className = "setting-label";
+    label.textContent = item.label;
+    if (item.restart_required) {
+      const tag = document.createElement("span");
+      tag.className = "restart-tag";
+      tag.textContent = "restart";
+      label.appendChild(tag);
+    }
+
+    const ctrlWrap = document.createElement("div");
+    ctrlWrap.className = "setting-ctrl";
+    buildSettingControl(ctrlWrap, item);
+
+    const help = document.createElement("div");
+    help.className = "setting-help";
+    help.textContent = item.help || "";
+
+    row.appendChild(label);
+    row.appendChild(ctrlWrap);
+    row.appendChild(help);
+    return row;
+  }
+
+  function buildSettingControl(wrap, item) {
+    if (item.kind === "bool" || item.kind === "enum") {
+      const sel = document.createElement("select");
+      const choices = item.kind === "bool" ? ["true", "false"] : item.choices;
+      for (const c of choices) {
+        const opt = document.createElement("option");
+        opt.value = c;
+        opt.textContent = c;
+        if (String(item.value) === c) opt.selected = true;
+        sel.appendChild(opt);
+      }
+      sel.addEventListener("change", () => saveSetting(item.key, sel.value));
+      wrap.appendChild(sel);
+      return;
+    }
+    // int / float — number input + explicit save (no save-per-keystroke).
+    const input = document.createElement("input");
+    input.type = "number";
+    input.value = item.value;
+    if (item.minimum !== null && item.minimum !== undefined) input.min = item.minimum;
+    if (item.maximum !== null && item.maximum !== undefined) input.max = item.maximum;
+    if (item.kind === "float") input.step = "0.1";
+    const save = document.createElement("button");
+    save.type = "button";
+    save.textContent = "save";
+    save.addEventListener("click", () => saveSetting(item.key, input.value));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") saveSetting(item.key, input.value);
     });
-    const isT = view === "transcript";
-    document.getElementById("transcript-view").hidden = !isT;
-    document.getElementById("evaluations-view").hidden = isT;
-    document.getElementById("transcript-toolbar").style.visibility = isT ? "visible" : "hidden";
-    if (!isT) loadIdeas();
+    wrap.appendChild(input);
+    wrap.appendChild(save);
+  }
+
+  async function saveSetting(key, value) {
+    await sendCommand({ intent: "update_setting", key, value: String(value) });
+    state.settingsLoaded = false;
+    loadSettings(); // reflect the coerced/echoed value
   }
 
   // ------------------------------------------------------------------
@@ -596,7 +720,7 @@
   }
 
   function reqProject() {
-    log("select a project first");
+    log("select a project first (Dashboard)");
     return null;
   }
 
@@ -685,7 +809,6 @@
     out.textContent = "[" + ts + "] " + line + "\n" + out.textContent;
   }
 
-  // Log a repeated condition only once until it changes (no error spam).
   function logOnce(line) {
     if (line === state.lastError) return;
     state.lastError = line;
