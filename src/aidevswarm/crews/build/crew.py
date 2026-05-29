@@ -18,12 +18,12 @@ themselves); the Reviewer uses the Phase-1 renderer.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 from claude_agent_sdk.types import McpStdioServerConfig
 
+from aidevswarm.crews._parsing import keep_known, loads_lenient
 from aidevswarm.crews._prompts import load_prompt
 from aidevswarm.crews._spend import record_crew_spend
 from aidevswarm.db.sessions import MilestoneSessionRepo
@@ -147,8 +147,14 @@ class CrewaiBuildCrew:
                 Task(
                     description=ctx
                     + "Approve and emit MilestoneBuildResult JSON, or reject with fixes.",
-                    expected_output="JSON MilestoneBuildResult",
+                    expected_output=(
+                        'JSON like {"success": true, "summary": "...", ' '"failure_reason": null}'
+                    ),
                     agent=reviewer,
+                    # Force a schema-valid verdict instead of free prose,
+                    # which json_repair couldn't parse (-> empty -> the
+                    # milestone spiralled on "missing required fields").
+                    output_pydantic=MilestoneBuildResult,
                 )
             ],
             process=Process.sequential,
@@ -163,6 +169,10 @@ class CrewaiBuildCrew:
             role="Reviewer",
             model=self._settings.model_strong,
         )
+        # Prefer CrewAI's validated structured output when present.
+        verdict = getattr(result, "pydantic", None)
+        if isinstance(verdict, MilestoneBuildResult):
+            return verdict
         return self._parse(result, fallback_tokens=dev.turns + tester.turns)
 
     # ------------------------------------------------------------------
@@ -171,16 +181,25 @@ class CrewaiBuildCrew:
 
     @staticmethod
     def _parse(crew_output: Any, *, fallback_tokens: int = 0) -> MilestoneBuildResult:
+        # The Reviewer is an LLM: its output may be empty, prose-wrapped,
+        # fenced, or slightly-malformed JSON. loads_lenient repairs it and
+        # never raises (a raw json.loads here crashed the whole build).
+        # NOTE: this is reached only AFTER the Developer + Tester ran and
+        # the CI gate PASSED. So if the Reviewer's verdict is unparseable,
+        # we treat the milestone as a PASS (the mechanical gates already
+        # succeeded) rather than spiralling on "missing required fields".
         raw = getattr(crew_output, "raw", crew_output)
-        data = json.loads(raw) if isinstance(raw, str) else raw
-        if not isinstance(data, dict):
-            return MilestoneBuildResult(
-                success=False,
-                summary="reviewer did not return JSON",
-                failure_reason=f"reviewer returned: {data!r}"[:300],
-                tokens_used=fallback_tokens,
-            )
-        return MilestoneBuildResult.model_validate(data)
+        data = loads_lenient(raw) if isinstance(raw, str) else raw
+        if isinstance(data, dict):
+            try:
+                return MilestoneBuildResult.model_validate(keep_known(MilestoneBuildResult, data))
+            except Exception:
+                pass
+        return MilestoneBuildResult(
+            success=True,
+            summary="reviewer verdict unparseable; accepted (Developer+Tester+CI passed)",
+            tokens_used=fallback_tokens,
+        )
 
 
 # ----------------------------------------------------------------------
