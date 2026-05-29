@@ -36,7 +36,7 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, runtime_checkable
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -77,6 +77,18 @@ class TranscriptEntry(BaseModel):
         if v is None:
             return ""
         return v if isinstance(v, str) else str(v)
+
+
+@runtime_checkable
+class TranscriptPublisher(Protocol):
+    """Anything that can accept a :class:`TranscriptEntry`.
+
+    :class:`EventBridge` satisfies it; producers (the SDK build tools)
+    depend on this narrow Protocol so they don't import the bridge and
+    tests can pass a list-backed fake.
+    """
+
+    def publish(self, entry: TranscriptEntry) -> None: ...
 
 
 class EventBridge:
@@ -287,4 +299,4 @@ class EventBridge:
         crewai_event_bus.register_handler(LLMCallCompletedEvent, _llm_done)
 
 
-__all__ = ["EventBridge", "TranscriptEntry", "TOPICS", "Topic"]
+__all__ = ["EventBridge", "TranscriptEntry", "TranscriptPublisher", "TOPICS", "Topic"]

@@ -177,8 +177,16 @@ h4 { margin: 0.6rem 0 0.3rem; font-size: 0.72rem; color: var(--muted); text-tran
 .kind-task_start, .kind-task_done { border-left-color: var(--purple); }
 .kind-agent_start, .kind-agent_done { border-left-color: var(--accent); }
 .kind-tool_use, .kind-tool_done { border-left-color: var(--warn); }
-.kind-llm_chunk { border-left-color: var(--ok); }
+.kind-llm_chunk, .kind-assistant { border-left-color: var(--ok); }
 .kind-state { border-left-color: var(--purple); }
+/* SDK Developer/Tester live stream (Phase 5 transcript bridging). */
+.kind-thinking { border-left-color: var(--muted); }
+.kind-thinking .msg-body { color: var(--muted); font-style: italic; }
+.kind-tool_result { border-left-color: var(--warn); }
+.kind-tool_result .msg-body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; color: var(--muted); }
+.kind-milestone_start { border-left-color: var(--accent); }
+.kind-ci_passed, .kind-review_done { border-left-color: var(--ok); }
+.kind-ci_failed { border-left-color: var(--err, #f85149); }
 .tool-chip { color: var(--warn); font-size: 0.76rem; }
 .tool-args { color: var(--muted); font-size: 0.72rem; }
 .role-PM, .role-Reviewer, .role-Replanner-PM { color: var(--purple); }

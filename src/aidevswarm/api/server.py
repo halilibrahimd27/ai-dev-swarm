@@ -158,10 +158,18 @@ def build_app(
     # ------------------------------------------------------------------
 
     async def _emit(topic: Topic, project_id: UUID | None) -> AsyncIterator[dict[str, str]]:
-        """Yield SSE-formatted dicts (id, event, data) per TranscriptEntry."""
+        """Yield SSE-formatted dicts per TranscriptEntry.
+
+        We deliberately do NOT set a per-kind ``event:`` field — that
+        would dispatch each message as a *named* SSE event, which the
+        browser's ``EventSource.onmessage`` (the default-"message"
+        handler the UI uses) never fires for. The kind travels inside the
+        JSON ``data`` payload instead, so a single ``onmessage`` handler
+        receives every entry.
+        """
         async for entry in bridge.stream(topic, project_id=project_id):
             payload = redactor(entry.model_dump_json())
-            yield {"id": str(entry.id), "event": entry.kind, "data": payload}
+            yield {"id": str(entry.id), "data": payload}
 
     @app.get("/sse/projects")
     async def sse_projects() -> EventSourceResponse:

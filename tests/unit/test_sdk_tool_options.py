@@ -86,6 +86,20 @@ def test_role_model_tiering(tmp_path: Path) -> None:
     assert tester_opts.model == "claude-haiku-4-5"
 
 
+def test_build_options_disables_claude_co_author(tmp_path: Path) -> None:
+    """Generated commits must NOT carry a Claude co-author trailer."""
+    import json
+
+    repo = FakeMilestoneSessionRepo()
+    tool = ClaudeAgentSDKDeveloperTool(Settings(), repo)
+    ms = _milestone()
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+    opts = tool.build_options(ms, ws, max_turns=10, max_budget_usd=1.0, resume=None)
+    assert opts.settings is not None
+    assert json.loads(opts.settings) == {"includeCoAuthoredBy": False}
+
+
 def test_resume_threads_through_options(tmp_path: Path) -> None:
     repo = FakeMilestoneSessionRepo()
     tool = ClaudeAgentSDKDeveloperTool(Settings(), repo)
@@ -345,6 +359,88 @@ async def test_arun_persists_session_and_records_spend(
     assert rec["output_tokens"] == 50
     assert rec["cost_usd"] == 0.12
     assert rec["role"] == "Developer"
+
+
+@pytest.mark.asyncio
+async def test_arun_streams_transcript_to_publisher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Developer/Tester turns are fanned out to the live transcript."""
+    from claude_agent_sdk import (
+        AssistantMessage,
+        ResultMessage,
+        TextBlock,
+        ToolResultBlock,
+        ToolUseBlock,
+        UserMessage,
+    )
+
+    from aidevswarm.observability import TranscriptEntry
+    from aidevswarm.tools import claude_agent_sdk_tool as mod
+
+    assistant = AssistantMessage(
+        content=[
+            TextBlock(text="Implementing fizzbuzz now."),
+            ToolUseBlock(id="t1", name="Write", input={"file_path": "fizz.py"}),
+        ],
+        model="claude-opus-4-7",
+    )
+    user = UserMessage(
+        content=[ToolResultBlock(tool_use_id="t1", content="ok", is_error=False)],
+    )
+    final = ResultMessage(
+        subtype="success",
+        duration_ms=10,
+        duration_api_ms=5,
+        is_error=False,
+        num_turns=2,
+        session_id="sess-x",
+        total_cost_usd=0.05,
+        result="done",
+    )
+
+    class _FakeClient:
+        def __init__(self, options: object = None) -> None:
+            pass
+
+        async def __aenter__(self) -> _FakeClient:
+            return self
+
+        async def __aexit__(self, *_: object) -> bool:
+            return False
+
+        async def query(self, _prompt: str) -> None:
+            return None
+
+        async def receive_messages(self):  # type: ignore[no-untyped-def]
+            yield assistant
+            yield user
+            yield final
+
+    monkeypatch.setattr(mod, "ClaudeSDKClient", _FakeClient)
+
+    captured: list[TranscriptEntry] = []
+
+    class _Sink:
+        def publish(self, entry: TranscriptEntry) -> None:
+            captured.append(entry)
+
+    tool = ClaudeAgentSDKDeveloperTool(Settings(), FakeMilestoneSessionRepo(), transcript=_Sink())
+    ms = _milestone()
+    ws = Workspace(tmp_path / "ws-t")
+    ws.init()
+
+    await tool._arun(ms, ws, max_turns=10, max_budget_usd=1.0)
+
+    kinds = [e.kind for e in captured]
+    assert "assistant" in kinds
+    assert "tool_use" in kinds
+    assert "tool_result" in kinds
+    # Every entry is tagged with the project + role so the per-project
+    # SSE filter routes it to the right transcript pane.
+    assert all(e.project_id == ms.project_id for e in captured)
+    assert all(e.role == "Developer" for e in captured)
+    assert all(e.topic == "transcript" for e in captured)
 
 
 @pytest.mark.asyncio

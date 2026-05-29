@@ -62,6 +62,35 @@ class Settings(BaseSettings):
         default="pr_only", validation_alias="AIDEVSWARM_GITHUB_MODE"
     )
 
+    # --- Git authorship (commits land under YOUR GitHub identity) ---------
+    # Every commit in a generated project's workspace is authored with
+    # these. Leave both blank to fall back to GITHUB_OWNER (name) +
+    # `<owner>@users.noreply.github.com` (email). For GitHub to attribute
+    # the commits to your account, set git_author_email to a *verified*
+    # email on your account (or your `<id>+<user>@users.noreply.github.com`
+    # form). The Claude co-author trailer is disabled separately at the
+    # SDK layer (see claude_agent_sdk_tool).
+    git_author_name: str = Field(default="", validation_alias="AIDEVSWARM_GIT_AUTHOR_NAME")
+    git_author_email: str = Field(default="", validation_alias="AIDEVSWARM_GIT_AUTHOR_EMAIL")
+
+    @property
+    def workspace_author_name(self) -> str:
+        """Git ``user.name`` for generated-project commits."""
+        return self.git_author_name or self.github_owner or "ai-dev-swarm"
+
+    @property
+    def workspace_author_email(self) -> str:
+        """Git ``user.email`` for generated-project commits.
+
+        Falls back to the GitHub no-reply form so commits still attribute
+        to the owner's account when no explicit email is set.
+        """
+        if self.git_author_email:
+            return self.git_author_email
+        if self.github_owner:
+            return f"{self.github_owner}@users.noreply.github.com"
+        return "ai-dev-swarm@local"
+
     # --- Telegram ---------------------------------------------------------
     telegram_bot_token: SecretStr = Field(
         default=SecretStr(""), validation_alias="TELEGRAM_BOT_TOKEN"

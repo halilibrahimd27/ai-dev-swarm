@@ -32,6 +32,7 @@ from aidevswarm.observability import (
     EventBridge,
     SecretRedactor,
     TranscriptEntry,
+    TranscriptPublisher,
     bootstrap_phoenix,
 )
 from aidevswarm.orchestrator.auto_split import AutoSplitPredictor
@@ -64,6 +65,7 @@ def _build_tick(
     settings: Settings,
     *,
     transition_sink: Callable[[Project], None] | None = None,
+    transcript: TranscriptPublisher | None = None,
 ) -> Tick:
     """Build the production :class:`Tick` from real adapters."""
     pool = open_pool(settings)
@@ -94,11 +96,19 @@ def _build_tick(
         ),
         planning_crew=CrewaiPlanningCrew(settings, recorder=recorder),
         build_crew=CrewaiBuildCrew(
-            settings, session_repo, mcp_servers=load_mcp_servers(), recorder=recorder
+            settings,
+            session_repo,
+            mcp_servers=load_mcp_servers(),
+            recorder=recorder,
+            transcript=transcript,
         ),
         replanning_crew=CrewaiReplanningCrew(settings, recorder=recorder),
         auto_split=AutoSplitPredictor(settings, session_repo),
-        workspace_manager=WorkspaceManager(settings.workspaces_dir),
+        workspace_manager=WorkspaceManager(
+            settings.workspaces_dir,
+            author_name=settings.workspace_author_name,
+            author_email=settings.workspace_author_email,
+        ),
         sandbox=(InMemorySandbox() if settings.sandbox_mode == "inmemory" else DockerSandbox()),
         telegram=TelegramNotifier(settings),
         github=GitHubPublisher(settings),
@@ -138,7 +148,7 @@ async def _async_main() -> None:
             )
         )
 
-    tick = _build_tick(settings, transition_sink=_publish_transition)
+    tick = _build_tick(settings, transition_sink=_publish_transition, transcript=bridge)
     project_repo = tick._d.project_repo
     milestone_repo = tick._d.milestone_repo
     pool_obj = open_pool(settings)  # already opened in _build_tick; reuse

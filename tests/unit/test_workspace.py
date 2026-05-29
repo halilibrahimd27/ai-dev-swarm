@@ -79,6 +79,41 @@ def test_git_log_has_initial_bootstrap_commit(tmp_path: Path) -> None:
     assert "workspace bootstrap" in log
 
 
+def test_commits_carry_configured_author(tmp_path: Path) -> None:
+    """Generated-repo commits must be authored by the operator's identity."""
+    ws = Workspace(
+        tmp_path / "author",
+        author_name="halilibrahimd27",
+        author_email="me@example.com",
+    )
+    ws.init()
+    (ws.root / "f.txt").write_text("x", encoding="utf-8")
+    ws.commit_all("feat: f")
+    name = subprocess.check_output(
+        ["git", "log", "-1", "--format=%an"], cwd=ws.root, text=True
+    ).strip()
+    email = subprocess.check_output(
+        ["git", "log", "-1", "--format=%ae"], cwd=ws.root, text=True
+    ).strip()
+    assert name == "halilibrahimd27"
+    assert email == "me@example.com"
+
+
+def test_init_reapplies_identity_on_existing_workspace(tmp_path: Path) -> None:
+    """A pre-existing workspace picks up the operator identity on re-init.
+
+    Workspaces created before the operator set their author identity must
+    not stay stuck with the old default — so init() re-applies it.
+    """
+    root = tmp_path / "preexisting"
+    Workspace(root, author_name="old", author_email="old@local").init()
+    # Re-open with a new identity (simulates the operator setting env vars).
+    ws = Workspace(root, author_name="halilibrahimd27", author_email="me@example.com")
+    ws.init()
+    email = subprocess.check_output(["git", "config", "user.email"], cwd=ws.root, text=True).strip()
+    assert email == "me@example.com"
+
+
 # ---------------------------------------------------------------------------
 # Remote / push
 # ---------------------------------------------------------------------------

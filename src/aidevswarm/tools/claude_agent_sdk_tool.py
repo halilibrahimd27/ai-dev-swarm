@@ -20,6 +20,7 @@ direct LLM prompts. Every call:
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,16 +28,23 @@ from typing import Any, ClassVar
 from uuid import UUID
 
 from claude_agent_sdk import (
+    AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
     HookMatcher,
+    Message,
     ResultMessage,
+    TextBlock,
+    ThinkingBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    UserMessage,
 )
 from claude_agent_sdk.types import McpStdioServerConfig
 
 from aidevswarm.db.sessions import MilestoneSessionRepo
 from aidevswarm.logging_config import get_logger
-from aidevswarm.observability import get_tracer
+from aidevswarm.observability import TranscriptEntry, TranscriptPublisher, get_tracer
 from aidevswarm.schemas import Milestone
 from aidevswarm.settings import Settings
 from aidevswarm.steering import SteeringRepo, render_prompt
@@ -48,6 +56,17 @@ _SDK_PROMPT_DIR = Path(__file__).resolve().parent / "sdk_prompts"
 # Tools the SDK is forbidden from invoking. Both roles are sandboxed
 # off the open internet — operator-driven steering may relax this.
 _DISALLOWED_TOOLS = ("WebFetch", "WebSearch")
+
+# Claude Code setting (passed as a JSON string) that stops the CLI from
+# appending a "Co-Authored-By: Claude" / "Generated with Claude Code"
+# trailer to git commits. Generated repos commit under the operator's
+# git identity only (set on the workspace).
+_CO_AUTHOR_OFF = json.dumps({"includeCoAuthoredBy": False})
+
+# Longest transcript text we forward per message block. Tool results
+# (file dumps, pytest output) can be huge; truncate so one block can't
+# evict the whole live transcript queue.
+_TRANSCRIPT_MAX = 2000
 
 
 @dataclass(frozen=True)
@@ -87,12 +106,14 @@ class ClaudeAgentSDKTool:
         steering_repo: SteeringRepo | None = None,
         mcp_servers: dict[str, McpStdioServerConfig] | None = None,
         recorder: SpendRecorder | None = None,
+        transcript: TranscriptPublisher | None = None,
     ) -> None:
         self._settings = settings
         self._session_repo = session_repo
         self._steering = steering_repo
         self._mcp_servers: dict[str, McpStdioServerConfig] = mcp_servers or {}
         self._recorder = recorder
+        self._transcript = transcript
         self._log = get_logger(__name__)
         self._template = (_SDK_PROMPT_DIR / f"{self._template_name}.txt").read_text("utf-8")
 
@@ -163,6 +184,11 @@ class ClaudeAgentSDKTool:
             model=self._model(),
             mcp_servers=dict(self._mcp_servers),
             hooks=self._build_hooks(milestone.project_id),
+            # Commits in the generated repo must carry ONLY the operator's
+            # git identity (set on the workspace) — no "Co-Authored-By:
+            # Claude" / "Generated with Claude Code" trailer. This Claude
+            # Code setting suppresses it at the CLI layer.
+            settings=_CO_AUTHOR_OFF,
         )
 
     def _build_hooks(
@@ -248,6 +274,11 @@ class ClaudeAgentSDKTool:
             async with ClaudeSDKClient(options=options) as client:
                 await client.query(self.task_prompt(milestone))
                 async for msg in client.receive_messages():
+                    # Stream the agent's turn-by-turn work to the live
+                    # transcript (the web UI) as it happens, not just the
+                    # final result. project_id lets the per-project SSE
+                    # filter route it to the right pane.
+                    self._publish_message(milestone.project_id, msg)
                     if isinstance(msg, ResultMessage):
                         final = msg
                         break
@@ -309,6 +340,70 @@ class ClaudeAgentSDKTool:
         )
 
     # ------------------------------------------------------------------
+    # Live transcript bridging (Phase 5 visibility)
+    # ------------------------------------------------------------------
+
+    def _publish_message(self, project_id: UUID, msg: Message) -> None:
+        """Fan one SDK message out to the live transcript topic.
+
+        Best-effort and never raises — a UI surface must never break the
+        build. No-op when no publisher is wired (Phase 0-4 callers).
+        """
+        sink = self._transcript
+        if sink is None:
+            return
+        try:
+            for entry in self._entries_for(project_id, msg):
+                sink.publish(entry)
+        except Exception as exc:  # pragma: no cover — defensive
+            self._log.warning("sdk.transcript_publish_failed", role=self.role, error=str(exc))
+
+    def _entries_for(self, project_id: UUID, msg: Message) -> list[TranscriptEntry]:
+        """Map an SDK message to zero or more transcript entries."""
+        if isinstance(msg, AssistantMessage):
+            entries = (self._block_entry(project_id, b) for b in msg.content)
+            return [e for e in entries if e is not None]
+        if isinstance(msg, UserMessage):
+            entries = (self._block_entry(project_id, b) for b in _as_blocks(msg.content))
+            return [e for e in entries if e is not None]
+        return []
+
+    def _block_entry(self, project_id: UUID, block: Any) -> TranscriptEntry | None:
+        """One content block -> a transcript entry (or None to skip)."""
+        if isinstance(block, TextBlock) and block.text.strip():
+            return self._entry(project_id, "assistant", block.text)
+        if isinstance(block, ThinkingBlock) and block.thinking.strip():
+            return self._entry(project_id, "thinking", block.thinking)
+        if isinstance(block, ToolUseBlock):
+            args = _short(json.dumps(block.input, default=str), 400)
+            return self._entry(project_id, "tool_use", block.name, extra={"args": args})
+        if isinstance(block, ToolResultBlock):
+            return self._entry(
+                project_id,
+                "tool_result",
+                _stringify(block.content),
+                extra={"is_error": bool(block.is_error)},
+            )
+        return None
+
+    def _entry(
+        self,
+        project_id: UUID,
+        kind: str,
+        text: str,
+        *,
+        extra: dict[str, Any] | None = None,
+    ) -> TranscriptEntry:
+        return TranscriptEntry(
+            topic="transcript",
+            project_id=project_id,
+            role=self.role,
+            kind=kind,
+            text=_short(text, _TRANSCRIPT_MAX),
+            extra=extra or {},
+        )
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
@@ -344,6 +439,36 @@ class ClaudeAgentSDKTesterTool(ClaudeAgentSDKTool):
 # ----------------------------------------------------------------------
 # Helpers used by tests
 # ----------------------------------------------------------------------
+
+
+def _short(text: str, limit: int) -> str:
+    """Truncate ``text`` to ``limit`` chars with an ellipsis marker."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"… (+{len(text) - limit} chars)"
+
+
+def _as_blocks(content: object) -> list[Any]:
+    """A ``UserMessage.content`` is either a str or a list of blocks."""
+    if isinstance(content, list):
+        return content
+    return []
+
+
+def _stringify(content: object) -> str:
+    """Flatten a ToolResultBlock's content (str | list[dict]) to text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                parts.append(str(item.get("text", item)))
+            else:
+                parts.append(str(item))
+        return "\n".join(parts)
+    return str(content)
 
 
 def _result_from(final: ResultMessage) -> SDKResult:

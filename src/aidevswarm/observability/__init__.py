@@ -10,6 +10,7 @@ from aidevswarm.observability.event_bridge import (
     EventBridge,
     Topic,
     TranscriptEntry,
+    TranscriptPublisher,
 )
 from aidevswarm.observability.phoenix import bootstrap_phoenix
 from aidevswarm.observability.redactor import SecretRedactor
@@ -21,6 +22,7 @@ __all__ = [
     "SecretRedactor",
     "Topic",
     "TranscriptEntry",
+    "TranscriptPublisher",
     "bootstrap_phoenix",
     "get_tracer",
 ]

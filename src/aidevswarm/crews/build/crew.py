@@ -28,6 +28,7 @@ from aidevswarm.crews._prompts import load_prompt
 from aidevswarm.crews._spend import record_crew_spend
 from aidevswarm.db.sessions import MilestoneSessionRepo
 from aidevswarm.logging_config import get_logger
+from aidevswarm.observability import TranscriptEntry, TranscriptPublisher
 from aidevswarm.schemas import Milestone, MilestoneBuildResult
 from aidevswarm.settings import Settings
 from aidevswarm.steering import SteeringRepo, render_prompt
@@ -52,11 +53,13 @@ class CrewaiBuildCrew:
         steering_repo: SteeringRepo | None = None,
         mcp_servers: dict[str, McpStdioServerConfig] | None = None,
         recorder: SpendRecorder | None = None,
+        transcript: TranscriptPublisher | None = None,
     ) -> None:
         self._settings = settings
         self._log = get_logger(__name__)
         self._steering = steering_repo
         self._recorder = recorder
+        self._transcript = transcript
         self._reviewer_template = load_prompt(_CREW_DIR, "reviewer")
         self._dev_tool = ClaudeAgentSDKDeveloperTool(
             settings,
@@ -64,6 +67,7 @@ class CrewaiBuildCrew:
             steering_repo=steering_repo,
             mcp_servers=mcp_servers,
             recorder=recorder,
+            transcript=transcript,
         )
         self._tester_tool = ClaudeAgentSDKTesterTool(
             settings,
@@ -71,6 +75,7 @@ class CrewaiBuildCrew:
             steering_repo=steering_repo,
             mcp_servers=mcp_servers,
             recorder=recorder,
+            transcript=transcript,
         )
 
     # ------------------------------------------------------------------
@@ -84,6 +89,7 @@ class CrewaiBuildCrew:
         workspace: Workspace,
         sandbox: Sandbox,
     ) -> MilestoneBuildResult:
+        self._emit(milestone, "milestone_start", f"Build started: {milestone.title}")
         dev = self._dev_tool.run_sync(milestone, workspace)
         if not dev.success:
             return _failure_from_sdk(dev, phase="developer")
@@ -95,9 +101,34 @@ class CrewaiBuildCrew:
         ci = sandbox.run_ci(str(workspace.root))
         if not ci.passed:
             self._log.info("build.ci_failed", exit_code=ci.exit_code)
+            self._emit(milestone, "ci_failed", f"CI gate failed (exit {ci.exit_code})")
             return _failure_from_ci(ci, dev=dev, tester=tester)
 
-        return self._review(milestone, workspace, dev, tester, ci)
+        self._emit(milestone, "ci_passed", "CI gate passed")
+        verdict = self._review(milestone, workspace, dev, tester, ci)
+        self._emit(
+            milestone,
+            "review_done",
+            f"Reviewer: {'APPROVED' if verdict.success else 'REJECTED'} — {verdict.summary}",
+        )
+        return verdict
+
+    def _emit(self, milestone: Milestone, kind: str, text: str) -> None:
+        """Publish a build-stage marker to the live transcript (best-effort)."""
+        if self._transcript is None:
+            return
+        try:
+            self._transcript.publish(
+                TranscriptEntry(
+                    topic="transcript",
+                    project_id=milestone.project_id,
+                    role="BuildCrew",
+                    kind=kind,
+                    text=text,
+                )
+            )
+        except Exception as exc:  # a UI sink must never break the build
+            self._log.warning("build.transcript_publish_failed", error=str(exc))
 
     # ------------------------------------------------------------------
     # Reviewer (single-turn CrewAI agent)

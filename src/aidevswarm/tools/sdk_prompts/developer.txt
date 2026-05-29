@@ -19,6 +19,9 @@ Hard constraints:
   * Never `print` — use `structlog`.
   * Never commit secrets, large binaries, or `.env*` files.
   * One small commit per logical change. Conventional Commits.
+  * Commit under the repository's configured git author ONLY. Never add
+    a "Co-Authored-By" trailer or a "Generated with Claude Code" line to
+    any commit message.
   * If you need to run shell, use `Bash`; never `WebFetch`/`WebSearch`.
 
 When the milestone is fully implemented, say "ready for tests" so the
