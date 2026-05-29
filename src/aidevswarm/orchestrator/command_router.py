@@ -41,16 +41,20 @@ from aidevswarm.schemas import (
     KillSwitch,
     ListState,
     PauseProject,
+    Project,
+    ProjectSpec,
     ProjectState,
     RejectIdea,
     Rescope,
     ResumeProject,
     ShowTranscript,
+    SubmitIdea,
     SwitchToIdea,
     TransformProject,
     UpdateSetting,
     requires_confirmation,
 )
+from aidevswarm.schemas.project import TERMINAL_PROJECT_STATES
 from aidevswarm.settings import Settings
 from aidevswarm.steering import SteeringRepo
 from aidevswarm.tools.protocols import KillSwitch as KillSwitchProto
@@ -128,6 +132,7 @@ class CommandRouter:
             ListState: self._list_state,
             ShowTranscript: self._show_transcript,
             UpdateSetting: self._update_setting,
+            SubmitIdea: self._submit_idea,
         }
 
     # ------------------------------------------------------------------
@@ -218,6 +223,37 @@ class CommandRouter:
             detail="ideation crew scheduled (watch transcript / Phoenix)",
         )
 
+    def _submit_idea(self, cmd: SubmitIdea) -> CommandResult:
+        """Queue an operator-authored idea directly as a project.
+
+        Skips Scout / Ideator / Critic + novelty check (the operator
+        knows what they want). The scheduler picks it up on the next
+        tick; planning + the approval gate still run normally.
+        """
+        name = _project_slug(cmd.title)
+        existing = [
+            p
+            for p in self.project_repo.list_all()
+            if p.name == name and p.state not in TERMINAL_PROJECT_STATES
+        ]
+        if existing:
+            return CommandResult(
+                ok=False,
+                intent=cmd.intent,
+                detail=f"a project named '{name}' is already in flight; pick a different title",
+            )
+        spec = ProjectSpec(
+            title=cmd.title.strip(),
+            summary=cmd.summary.strip(),
+            rationale=(cmd.rationale.strip() or cmd.summary.strip()),
+            stack=list(cmd.stack),
+            tags=list(cmd.tags),
+            score=100,  # operator-curated: top score
+        )
+        created = self.project_repo.create(Project(name=name, spec=spec))
+        self._log.info("router.idea_submitted", project=name)
+        return CommandResult(ok=True, intent=cmd.intent, detail=f"queued '{created.name}'")
+
     def _update_setting(self, cmd: UpdateSetting) -> CommandResult:
         if self.settings is None or self.settings_repo is None:
             return CommandResult(ok=False, intent=cmd.intent, detail="settings editing not wired")
@@ -300,6 +336,13 @@ class CommandRouter:
         self.kill_switch.trip(reason=cmd.reason)
         self._log.warning("router.kill_switch_tripped", reason=cmd.reason)
         return CommandResult(ok=True, intent=cmd.intent, detail="global kill switch tripped")
+
+
+def _project_slug(title: str) -> str:
+    """URL-safe, repo-friendly project name from a title (mirrors orchestrator)."""
+    cleaned = "".join(c.lower() if c.isalnum() else "-" for c in title)
+    cleaned = "-".join(part for part in cleaned.split("-") if part)
+    return cleaned[:48] or "idea"
 
 
 __all__ = ["CommandRouter", "CommandResult", "UnconfirmedDestructiveCommand"]

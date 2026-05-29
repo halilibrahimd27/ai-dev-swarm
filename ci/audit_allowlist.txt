@@ -21,3 +21,16 @@ GHSA-pjjw-68hj-v9mw
 # refuses LAN IPs) so the attack surface is local-only. Revisit once
 # upstream ships a fix.
 MAL-2026-4750
+
+# chromadb 1.1.1 — CVE-2026-45829 has no upstream fix yet (Fix Versions
+# column is empty). chromadb is a transitive dep via CrewAI's internal
+# short-term memory; we never feed it untrusted input nor expose its
+# HTTP/gRPC surfaces (CrewAI uses the embedded path internally — we don't
+# run a chromadb server). Revisit once upstream ships a fix.
+CVE-2026-45829
+
+# uv 0.9.30 (dev-only) — GHSA-4gg8-gxpx-9rph; fix lands in 0.11.15. Same
+# surface as GHSA-pjjw-68hj-v9mw above: the venv-pinned uv 0.9.30 is only
+# used by GitHub Actions to read uv.lock; the user-facing host uv is
+# already 0.11.16. No production exposure.
+GHSA-4gg8-gxpx-9rph

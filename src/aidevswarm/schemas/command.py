@@ -89,6 +89,24 @@ class IdeateNow(_Base):
     intent: Literal["ideate_now"] = "ideate_now"
 
 
+class SubmitIdea(_Base):
+    """Operator-authored project idea — queues a project directly.
+
+    Bypasses the Scout / Ideator / Critic crew (and the novelty check):
+    the operator already knows what they want, so we skip the LLM round.
+    The project lands in QUEUED and the scheduler picks it up; if
+    ``require_approval`` is True, it still parks at ``awaiting_approval``
+    after planning. Non-destructive.
+    """
+
+    intent: Literal["submit_idea"] = "submit_idea"
+    title: str = Field(min_length=3, max_length=120)
+    summary: str = Field(min_length=10, max_length=600)
+    rationale: str = Field(default="", max_length=600)
+    stack: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+
+
 class UpdateSetting(_Base):
     """Change one operator-editable operational setting at runtime.
 
@@ -199,6 +217,7 @@ Command = Annotated[
     | ListState
     | ShowTranscript
     | IdeateNow
+    | SubmitIdea
     | UpdateSetting
     | PauseProject
     | ResumeProject
