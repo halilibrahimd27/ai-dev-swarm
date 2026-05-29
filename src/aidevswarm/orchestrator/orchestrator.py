@@ -19,7 +19,9 @@ from aidevswarm.crews import CrewaiBuildCrew, CrewaiIdeationCrew, CrewaiPlanning
 from aidevswarm.crews.ideation.novelty import NoveltyChecker
 from aidevswarm.crews.replanning import CrewaiReplanningCrew
 from aidevswarm.db.pool import close_pool, open_pool
+from aidevswarm.db.protocols import IdeaEvaluationRepo
 from aidevswarm.db.repositories import (
+    PsycopgIdeaEvaluationRepo,
     PsycopgMilestoneRepo,
     PsycopgProjectRepo,
     PsycopgTokenLogRepo,
@@ -140,6 +142,7 @@ async def _async_main() -> None:
     milestone_repo = tick._d.milestone_repo
     pool_obj = open_pool(settings)  # already opened in _build_tick; reuse
     steering_repo = PsycopgSteeringRepo(pool_obj)
+    idea_repo = PsycopgIdeaEvaluationRepo(pool_obj)
 
     redactor = SecretRedactor(settings.redact_patterns)
     loop = asyncio.get_running_loop()
@@ -147,7 +150,7 @@ async def _async_main() -> None:
         project_repo=project_repo,
         steering_repo=steering_repo,
         kill_switch=tick._d.kill_switch,
-        ideate_runner=lambda: (loop.create_task(_run_ideation_once(tick, log)), None)[1],
+        ideate_runner=lambda: (loop.create_task(_run_ideation_once(tick, idea_repo, log)), None)[1],
     )
     api_app = build_app(
         settings=settings,
@@ -157,6 +160,7 @@ async def _async_main() -> None:
         router=router,
         redactor=redactor,
         token_repo=PsycopgTokenLogRepo(pool_obj),
+        idea_repo=idea_repo,
         ui_dir=_UI_DIR if _UI_DIR.is_dir() else None,
     )
 
@@ -175,7 +179,7 @@ async def _async_main() -> None:
             )
             return
         log.info("ideation_cron.run")
-        await _run_ideation_once(tick, log)
+        await _run_ideation_once(tick, idea_repo, log)
 
     scheduler = Scheduler(
         jobs=[
@@ -217,27 +221,88 @@ async def _async_main() -> None:
         close_pool()
 
 
-async def _run_ideation_once(tick: Tick, log: Any) -> None:
-    """Run the ideation crew once + queue the winning idea, if any.
+async def _run_ideation_once(
+    tick: Tick,
+    idea_repo: IdeaEvaluationRepo,
+    log: Any,
+) -> None:
+    """Ideate (up to ``ideation_max_rounds``) until an idea clears the gate.
 
-    Operator-triggered via the Phase 6 ``ideate_now`` Command. The LLM
-    call lives on a worker thread (``asyncio.to_thread``) so it doesn't
-    block the orchestrator event loop. We just log on every outcome —
-    the operator watches the result land in the projects pane.
+    Each round's scored ideas are persisted as :class:`IdeaEvaluation`
+    rows (so the UI can show *why* each was accepted/rejected). An idea
+    must score >= ``ideation_min_score`` AND be novel to become a
+    project; the first round that yields a winner queues it and stops.
+    LLM work runs on a worker thread so the event loop stays responsive.
     """
-    log.info("ideation.run.started")
-    try:
-        ideas = await asyncio.to_thread(tick._d.ideation_crew.run)
-    except Exception as exc:
-        log.warning("ideation.run.failed", error=str(exc))
-        return
-    if not ideas:
-        log.info("ideation.run.no_ideas")
-        return
-    best = max(ideas, key=lambda s: s.total)
+    settings = tick._d.settings
+    for round_num in range(1, settings.ideation_max_rounds + 1):
+        log.info("ideation.round.start", round=round_num)
+        try:
+            scored = await asyncio.to_thread(tick._d.ideation_crew.run)
+        except Exception as exc:
+            log.warning("ideation.round.failed", round=round_num, error=str(exc))
+            continue
+        if not scored:
+            log.info("ideation.round.empty", round=round_num)
+            continue
+
+        passing = [
+            s
+            for s in scored
+            if s.total >= settings.ideation_min_score and s.rejected_reason is None
+        ]
+        best = max(passing, key=lambda s: s.total) if passing else None
+
+        if best is not None:
+            project = _project_from_idea(best)
+            await asyncio.to_thread(tick._d.project_repo.create, project)
+            await asyncio.to_thread(
+                _persist_evaluations, idea_repo, scored, round_num, best, project.id
+            )
+            log.info(
+                "ideation.queued",
+                project=project.name,
+                score=int(best.total),
+                round=round_num,
+            )
+            return
+
+        await asyncio.to_thread(_persist_evaluations, idea_repo, scored, round_num, None, None)
+        log.info("ideation.round.no_pass", round=round_num, count=len(scored))
+
+    log.info("ideation.exhausted", rounds=settings.ideation_max_rounds)
+
+
+def _persist_evaluations(
+    idea_repo: IdeaEvaluationRepo,
+    scored: list[Any],
+    round_num: int,
+    accepted: Any | None,
+    project_id: Any | None,
+) -> None:
+    """Record every scored idea this round with its accept/reject verdict."""
+    import contextlib
+
+    from aidevswarm.schemas import IdeaEvaluation
+
+    for s in scored:
+        is_accepted = accepted is not None and s is accepted
+        # Recording is best-effort; never break ideation over a log write.
+        with contextlib.suppress(Exception):
+            idea_repo.record(
+                IdeaEvaluation.from_scored(
+                    s,
+                    round=round_num,
+                    accepted=is_accepted,
+                    project_id=project_id if is_accepted else None,
+                )
+            )
+
+
+def _project_from_idea(best: Any) -> Project:
     from aidevswarm.schemas import ProjectSpec
 
-    project = Project(
+    return Project(
         name=_idea_slug(best.idea.title),
         spec=ProjectSpec(
             title=best.idea.title,
@@ -247,13 +312,6 @@ async def _run_ideation_once(tick: Tick, log: Any) -> None:
             tags=list(best.idea.tags),
             score=int(best.total),
         ),
-    )
-    await asyncio.to_thread(tick._d.project_repo.create, project)
-    log.info(
-        "ideation.run.queued",
-        project=project.name,
-        score=int(best.total),
-        title=best.idea.title,
     )
 
 

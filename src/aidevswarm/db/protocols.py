@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from aidevswarm.schemas import (
+    IdeaEvaluation,
     Milestone,
     MilestoneSpec,
     MilestoneState,
@@ -29,6 +30,7 @@ class ProjectRepo(Protocol):
     def list_by_state(self, state: ProjectState) -> list[Project]: ...
     def update_state(self, project_id: UUID, new_state: ProjectState) -> Project: ...
     def set_github_repo(self, project_id: UUID, repo_url: str) -> None: ...
+    def set_status_detail(self, project_id: UUID, detail: str | None) -> None: ...
 
 
 class MilestoneRepo(Protocol):
@@ -81,3 +83,17 @@ class TokenLogRepo(Protocol):
     def daily_by_role(self) -> list[tuple[str, int, float]]:
         """Today's spend grouped by role: ``(role, tokens, cost_usd)`` rows,
         most-expensive first."""
+
+    def all_time_totals(self) -> tuple[int, float]:
+        """All-time ``(total_tokens, total_cost_usd)``."""
+
+    def by_project(self) -> list[tuple[UUID, int, float]]:
+        """All-time spend grouped by project: ``(project_id, tokens, cost)``
+        rows (project-scoped only), most-expensive first."""
+
+
+class IdeaEvaluationRepo(Protocol):
+    """Append + read the Critic's scored-idea verdicts."""
+
+    def record(self, evaluation: IdeaEvaluation) -> IdeaEvaluation: ...
+    def list_recent(self, limit: int = 50) -> list[IdeaEvaluation]: ...

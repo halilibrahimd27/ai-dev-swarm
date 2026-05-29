@@ -17,6 +17,8 @@ from psycopg_pool import ConnectionPool
 
 from aidevswarm._time import utc_now
 from aidevswarm.schemas import (
+    CriticScores,
+    IdeaEvaluation,
     Milestone,
     MilestoneSpec,
     MilestoneState,
@@ -33,6 +35,7 @@ def _project_from_row(row: dict[str, Any]) -> Project:
         spec=ProjectSpec.model_validate(row["spec"]),
         state=ProjectState(row["state"]),
         github_repo=row["github_repo"],
+        status_detail=row.get("status_detail"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -133,6 +136,13 @@ class PsycopgProjectRepo:
             cur.execute(
                 "UPDATE projects SET github_repo = %s, updated_at = %s WHERE id = %s",
                 (repo_url, utc_now(), str(project_id)),
+            )
+
+    def set_status_detail(self, project_id: UUID, detail: str | None) -> None:
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE projects SET status_detail = %s, updated_at = %s WHERE id = %s",
+                (detail, utc_now(), str(project_id)),
             )
 
 
@@ -439,8 +449,95 @@ class PsycopgTokenLogRepo:
             )
             return [(str(r[0]), int(r[1]), float(r[2])) for r in cur.fetchall()]
 
+    def all_time_totals(self) -> tuple[int, float]:
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(input_tokens + output_tokens), 0),
+                       COALESCE(SUM(cost_usd), 0)
+                FROM token_log
+                """
+            )
+            row = cur.fetchone()
+            if row is None:
+                return 0, 0.0
+            return int(row[0]), float(row[1])
+
+    def by_project(self) -> list[tuple[UUID, int, float]]:
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT project_id,
+                       COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens,
+                       COALESCE(SUM(cost_usd), 0) AS cost
+                FROM token_log
+                WHERE project_id IS NOT NULL
+                GROUP BY project_id
+                ORDER BY cost DESC
+                """
+            )
+            return [(r[0], int(r[1]), float(r[2])) for r in cur.fetchall()]
+
+
+def _idea_eval_from_row(row: dict[str, Any]) -> IdeaEvaluation:
+    return IdeaEvaluation(
+        id=int(row["id"]),
+        round=int(row["round"]),
+        title=row["title"],
+        summary=row["summary"],
+        scores=CriticScores.model_validate(row["scores"]),
+        total=int(row["total"]),
+        novel=bool(row["novel"]),
+        accepted=bool(row["accepted"]),
+        rejected_reason=row["rejected_reason"],
+        project_id=row["project_id"],
+        created_at=row["created_at"],
+    )
+
+
+class PsycopgIdeaEvaluationRepo:
+    """Concrete :class:`aidevswarm.db.protocols.IdeaEvaluationRepo`."""
+
+    def __init__(self, pool: ConnectionPool) -> None:
+        self._pool = pool
+
+    def record(self, evaluation: IdeaEvaluation) -> IdeaEvaluation:
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                INSERT INTO idea_evaluations
+                  (round, title, summary, scores, total, novel, accepted,
+                   rejected_reason, project_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                (
+                    evaluation.round,
+                    evaluation.title,
+                    evaluation.summary,
+                    Json(evaluation.scores.model_dump()),
+                    evaluation.total,
+                    evaluation.novel,
+                    evaluation.accepted,
+                    evaluation.rejected_reason,
+                    str(evaluation.project_id) if evaluation.project_id else None,
+                ),
+            )
+            row = cur.fetchone()
+            assert row is not None, "INSERT ... RETURNING * always yields a row"
+            return _idea_eval_from_row(row)
+
+    def list_recent(self, limit: int = 50) -> list[IdeaEvaluation]:
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                "SELECT * FROM idea_evaluations ORDER BY created_at DESC, id DESC LIMIT %s",
+                (limit,),
+            )
+            return [_idea_eval_from_row(r) for r in cur.fetchall()]
+
 
 __all__ = [
+    "PsycopgIdeaEvaluationRepo",
     "PsycopgMilestoneRepo",
     "PsycopgProjectRepo",
     "PsycopgTokenLogRepo",

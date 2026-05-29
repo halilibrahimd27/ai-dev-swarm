@@ -8,8 +8,14 @@ process-wide :class:`psycopg_pool.ConnectionPool` is owned by
 """
 
 from aidevswarm.db.pool import close_pool, get_pool, open_pool
-from aidevswarm.db.protocols import MilestoneRepo, ProjectRepo, TokenLogRepo
+from aidevswarm.db.protocols import (
+    IdeaEvaluationRepo,
+    MilestoneRepo,
+    ProjectRepo,
+    TokenLogRepo,
+)
 from aidevswarm.db.repositories import (
+    PsycopgIdeaEvaluationRepo,
     PsycopgMilestoneRepo,
     PsycopgProjectRepo,
     PsycopgTokenLogRepo,
@@ -17,9 +23,11 @@ from aidevswarm.db.repositories import (
 from aidevswarm.db.sessions import MilestoneSessionRepo, PsycopgMilestoneSessionRepo
 
 __all__ = [
+    "IdeaEvaluationRepo",
     "MilestoneRepo",
     "MilestoneSessionRepo",
     "ProjectRepo",
+    "PsycopgIdeaEvaluationRepo",
     "PsycopgMilestoneRepo",
     "PsycopgMilestoneSessionRepo",
     "PsycopgProjectRepo",

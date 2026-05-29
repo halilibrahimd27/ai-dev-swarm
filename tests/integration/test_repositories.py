@@ -15,12 +15,15 @@ from psycopg_pool import ConnectionPool
 
 from aidevswarm.db.pool import close_pool, open_pool
 from aidevswarm.db.repositories import (
+    PsycopgIdeaEvaluationRepo,
     PsycopgMilestoneRepo,
     PsycopgProjectRepo,
     PsycopgTokenLogRepo,
 )
 from aidevswarm.schemas import (
     AcceptanceCriterion,
+    CriticScores,
+    IdeaEvaluation,
     MilestoneSpec,
     MilestoneState,
     Project,
@@ -232,3 +235,63 @@ def test_token_log_record_with_null_project_milestone(
         cost_usd=0.01,
     )
     # No exception is the assertion.
+
+
+def test_token_log_cost_and_project_aggregates(live_pool: ConnectionPool, project: Project) -> None:
+    trepo = PsycopgTokenLogRepo(live_pool)
+    trepo.record(
+        project_id=project.id,
+        milestone_id=None,
+        role="Developer",
+        model="claude-opus-4-7",
+        input_tokens=1000,
+        output_tokens=500,
+        cost_usd=0.30,
+    )
+    assert trepo.daily_cost_usd() >= 0.30
+    roles = dict((r[0], r[2]) for r in trepo.daily_by_role())
+    assert roles.get("Developer", 0.0) >= 0.30
+    all_tokens, all_cost = trepo.all_time_totals()
+    assert all_tokens >= 1500 and all_cost >= 0.30
+    by_proj = {pid: cost for pid, _tok, cost in trepo.by_project()}
+    assert by_proj.get(project.id, 0.0) >= 0.30
+
+
+# ------------------------- status_detail -------------------------
+
+
+def test_set_status_detail_round_trips(live_pool: ConnectionPool, project: Project) -> None:
+    prepo = PsycopgProjectRepo(live_pool)
+    prepo.set_status_detail(project.id, "blocked: milestone X failed 3x")
+    got = prepo.get(project.id)
+    assert got is not None and got.status_detail == "blocked: milestone X failed 3x"
+    prepo.set_status_detail(project.id, None)
+    cleared = prepo.get(project.id)
+    assert cleared is not None and cleared.status_detail is None
+
+
+# ------------------------- IdeaEvaluationRepo -------------------------
+
+
+def test_idea_evaluation_record_and_list(live_pool: ConnectionPool) -> None:
+    repo = PsycopgIdeaEvaluationRepo(live_pool)
+    scores = CriticScores(
+        depth_ambition=90,
+        usefulness_niche=85,
+        novelty=80,
+        decomposability=85,
+        buildability=80,
+    )
+    stored = repo.record(
+        IdeaEvaluation(
+            title=f"idea-{uuid4()}",
+            summary="s",
+            scores=scores,
+            total=85,
+            accepted=True,
+            round=1,
+        )
+    )
+    assert stored.id > 0
+    recent = repo.list_recent(limit=10)
+    assert any(e.title == stored.title and e.accepted for e in recent)

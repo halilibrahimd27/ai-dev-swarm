@@ -100,8 +100,19 @@ class Settings(BaseSettings):
     milestone_retry_limit: int = Field(
         default=3, validation_alias="AIDEVSWARM_MILESTONE_RETRY_LIMIT"
     )
-    require_approval: bool = Field(default=True, validation_alias="AIDEVSWARM_REQUIRE_APPROVAL")
+    # Default OFF: the operator chose fully-autonomous operation — an
+    # accepted idea goes straight to building + GitHub push, no human
+    # gate. Set AIDEVSWARM_REQUIRE_APPROVAL=true to re-enable the
+    # one-click checkpoint.
+    require_approval: bool = Field(default=False, validation_alias="AIDEVSWARM_REQUIRE_APPROVAL")
     tick_seconds: int = Field(default=30, validation_alias="AIDEVSWARM_TICK_SECONDS")
+
+    # --- Ideation gate / loop --------------------------------------------
+    # An idea must score >= min_score (and be novel) to become a project.
+    # If a round produces nothing that clears the bar, re-ideate up to
+    # ideation_max_rounds times before giving up (bounds runaway spend).
+    ideation_min_score: int = Field(default=80, validation_alias="AIDEVSWARM_IDEATION_MIN_SCORE")
+    ideation_max_rounds: int = Field(default=5, validation_alias="AIDEVSWARM_IDEATION_MAX_ROUNDS")
 
     # --- Phase 4 replanner ------------------------------------------------
     # Auto-split fires BEFORE the LLM-driven replanner crew runs. It's a

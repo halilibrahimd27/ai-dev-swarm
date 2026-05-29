@@ -68,6 +68,9 @@ class Project(BaseModel):
     spec: ProjectSpec
     state: ProjectState = ProjectState.QUEUED
     github_repo: str | None = None
+    # Human-readable "why is it in this state" — e.g. the block reason.
+    # Surfaced in the web UI so a blocked/paused project explains itself.
+    status_detail: str | None = None
     created_at: datetime = Field(default_factory=_utc_now)
     updated_at: datetime = Field(default_factory=_utc_now)
 

@@ -209,5 +209,8 @@ def test_replanner_escalate_routes_to_blocked_and_pings_telegram(
 
     snapshot = project_repo.get(project.id)
     assert snapshot is not None and snapshot.state is ProjectState.BLOCKED
+    # The block reason is persisted so the UI can explain *why* it stopped.
+    assert snapshot.status_detail is not None
+    assert "escalated" in snapshot.status_detail.lower()
     # An operator-facing alert was sent.
     assert any("escalated" in msg.lower() for msg in telegram.sent), telegram.sent

@@ -40,7 +40,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import TypeAdapter, ValidationError
 from sse_starlette.sse import EventSourceResponse
 
-from aidevswarm.db.protocols import MilestoneRepo, ProjectRepo, TokenLogRepo
+from aidevswarm.db.protocols import (
+    IdeaEvaluationRepo,
+    MilestoneRepo,
+    ProjectRepo,
+    TokenLogRepo,
+)
 from aidevswarm.logging_config import get_logger
 from aidevswarm.observability import EventBridge, SecretRedactor, Topic
 from aidevswarm.orchestrator.command_router import CommandResult, CommandRouter
@@ -59,6 +64,7 @@ def build_app(
     router: CommandRouter,
     redactor: SecretRedactor,
     token_repo: TokenLogRepo | None = None,
+    idea_repo: IdeaEvaluationRepo | None = None,
     ui_dir: Path | None = None,
 ) -> FastAPI:
     """Wire a FastAPI application with all Phase 5 dependencies.
@@ -113,15 +119,24 @@ def build_app(
     @app.get("/api/spend")
     async def spend() -> dict[str, Any]:
         if token_repo is None:
-            return {"daily_tokens": 0, "daily_cost_usd": 0.0, "by_role": []}
-        tokens, cost, by_role = await asyncio.to_thread(_collect_spend, token_repo)
-        return {
-            "daily_tokens": tokens,
-            "daily_cost_usd": round(cost, 4),
-            "by_role": [
-                {"role": role, "tokens": t, "cost_usd": round(c, 4)} for role, t, c in by_role
-            ],
-        }
+            return {
+                "daily_tokens": 0,
+                "daily_cost_usd": 0.0,
+                "all_time_tokens": 0,
+                "all_time_cost_usd": 0.0,
+                "by_role": [],
+                "by_project": [],
+            }
+        data = await asyncio.to_thread(_collect_spend, token_repo, project_repo)
+        return data
+
+    @app.get("/api/ideas")
+    async def ideas() -> list[dict[str, Any]]:
+        """Recent Critic evaluations — why each idea was accepted/rejected."""
+        if idea_repo is None:
+            return []
+        rows = await asyncio.to_thread(_collect_ideas, idea_repo)
+        return rows
 
     # ------------------------------------------------------------------
     # REST: commands (shared with Telegram)
@@ -183,13 +198,34 @@ def _collect_projects(project_repo: ProjectRepo) -> list[Project]:
     return project_repo.list_all()
 
 
-def _collect_spend(token_repo: TokenLogRepo) -> tuple[int, float, list[tuple[str, int, float]]]:
-    """Today's token total, cost, and per-role breakdown (one DB round-trip set)."""
-    return (
-        token_repo.daily_total_tokens(),
-        token_repo.daily_cost_usd(),
-        token_repo.daily_by_role(),
-    )
+def _collect_spend(token_repo: TokenLogRepo, project_repo: ProjectRepo) -> dict[str, Any]:
+    """Today + all-time spend, per-role and per-project (named)."""
+    daily_tokens = token_repo.daily_total_tokens()
+    daily_cost = token_repo.daily_cost_usd()
+    by_role = token_repo.daily_by_role()
+    all_tokens, all_cost = token_repo.all_time_totals()
+    by_project = token_repo.by_project()
+    names = {p.id: p.name for p in project_repo.list_all()}
+    return {
+        "daily_tokens": daily_tokens,
+        "daily_cost_usd": round(daily_cost, 4),
+        "all_time_tokens": all_tokens,
+        "all_time_cost_usd": round(all_cost, 4),
+        "by_role": [{"role": role, "tokens": t, "cost_usd": round(c, 4)} for role, t, c in by_role],
+        "by_project": [
+            {
+                "project_id": str(pid),
+                "name": names.get(pid, str(pid)[:8]),
+                "tokens": t,
+                "cost_usd": round(c, 4),
+            }
+            for pid, t, c in by_project
+        ],
+    }
+
+
+def _collect_ideas(idea_repo: IdeaEvaluationRepo) -> list[dict[str, Any]]:
+    return [e.model_dump(mode="json") for e in idea_repo.list_recent(limit=60)]
 
 
 def _fetch_project(

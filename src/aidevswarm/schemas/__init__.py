@@ -23,7 +23,7 @@ from aidevswarm.schemas.command import (
     TransformProject,
     requires_confirmation,
 )
-from aidevswarm.schemas.idea import CriticScores, Idea, ScoredIdea
+from aidevswarm.schemas.idea import CriticScores, Idea, IdeaEvaluation, ScoredIdea
 from aidevswarm.schemas.milestone import (
     AcceptanceCriterion,
     Milestone,
@@ -56,6 +56,7 @@ __all__ = [
     "DropAndStartNew",
     "Escalate",
     "Idea",
+    "IdeaEvaluation",
     "IdeateNow",
     "InjectNote",
     "KillSwitch",

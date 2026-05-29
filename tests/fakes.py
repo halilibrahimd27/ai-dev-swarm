@@ -76,6 +76,10 @@ class InMemoryProjectRepo:
         existing = self.rows[project_id]
         self.rows[project_id] = existing.model_copy(update={"github_repo": repo_url})
 
+    def set_status_detail(self, project_id: UUID, detail: str | None) -> None:
+        existing = self.rows[project_id]
+        self.rows[project_id] = existing.model_copy(update={"status_detail": detail})
+
 
 @dataclass
 class InMemoryMilestoneRepo:
@@ -242,6 +246,40 @@ class InMemoryTokenLogRepo:
         rows = [(role, t, c) for role, (t, c) in agg.items()]
         rows.sort(key=lambda x: x[2], reverse=True)
         return rows
+
+    def all_time_totals(self) -> tuple[int, float]:
+        tokens = sum(r["input_tokens"] + r["output_tokens"] for r in self.records)
+        cost = float(sum(r["cost_usd"] for r in self.records))
+        return tokens, cost
+
+    def by_project(self) -> list[tuple[UUID, int, float]]:
+        agg: dict[UUID, tuple[int, float]] = {}
+        for r in self.records:
+            pid = r["project_id"]
+            if pid is None:
+                continue
+            tokens, cost = agg.get(pid, (0, 0.0))
+            agg[pid] = (tokens + r["input_tokens"] + r["output_tokens"], cost + r["cost_usd"])
+        rows = [(pid, t, c) for pid, (t, c) in agg.items()]
+        rows.sort(key=lambda x: x[2], reverse=True)
+        return rows
+
+
+@dataclass
+class InMemoryIdeaEvaluationRepo:
+    """Satisfies :class:`aidevswarm.db.protocols.IdeaEvaluationRepo`."""
+
+    rows: list[Any] = field(default_factory=list)
+    _next_id: int = 1
+
+    def record(self, evaluation: Any) -> Any:
+        stored = evaluation.model_copy(update={"id": self._next_id})
+        self._next_id += 1
+        self.rows.append(stored)
+        return stored
+
+    def list_recent(self, limit: int = 50) -> list[Any]:
+        return list(reversed(self.rows))[:limit]
 
 
 # ---------------------------------------------------------------------------

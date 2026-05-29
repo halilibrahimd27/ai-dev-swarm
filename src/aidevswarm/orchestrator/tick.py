@@ -159,6 +159,10 @@ class Tick:
                 f"[ai-dev-swarm] project '{project.name}' awaits plan approval "
                 f"({len(graph.milestones)} milestones)."
             )
+            self._d.project_repo.set_status_detail(
+                project.id,
+                f"awaiting your approval — {len(graph.milestones)} milestones planned",
+            )
         return self._move(project, next_state)
 
     def _build_one_milestone(self, project: Project) -> Project | None:
@@ -191,10 +195,16 @@ class Tick:
                     f"[ai-dev-swarm] project '{project.name}' blocked: milestone "
                     f"'{milestone.title}' exceeded its token sanity cap."
                 )
-                return self._move(project, ProjectState.BLOCKED)
+                return self._block(
+                    project,
+                    f"milestone '{milestone.title}' exceeded its token sanity cap",
+                )
             return self._move(project, ProjectState.REPLANNING)
 
         self._d.milestone_repo.update_state(milestone.id, MilestoneState.BUILDING)
+        # The project is actively working — record what on, which also
+        # clears any stale block reason from a prior attempt.
+        self._d.project_repo.set_status_detail(project.id, f"building: {milestone.title}")
         workspace = self._d.workspace_manager.for_project(project.name)
         # Approved projects get a private GitHub repo on the first build;
         # the remote is set so each milestone can be pushed as it lands.
@@ -220,7 +230,12 @@ class Tick:
                     f"[ai-dev-swarm] project '{project.name}' blocked on "
                     f"milestone '{milestone.title}'."
                 )
-                return self._move(project, ProjectState.BLOCKED)
+                return self._block(
+                    project,
+                    f"milestone '{milestone.title}' failed "
+                    f"{self._d.settings.milestone_retry_limit}x: "
+                    f"{result.failure_reason or 'unknown'}",
+                )
             # Retry -> Phase 4 routes through the replanner.
             return self._move(project, ProjectState.REPLANNING)
 
@@ -388,7 +403,7 @@ class Tick:
                     f"[ai-dev-swarm] project '{project.name}' escalated: {action.reason}"
                 )
                 self._log.info("replanner.escalate", project=project.name, reason=action.reason)
-                return self._move(project, ProjectState.BLOCKED)
+                return self._block(project, f"replanner escalated: {action.reason}")
 
     # ------------------------------------------------------------------
     # Helpers
@@ -409,6 +424,11 @@ class Tick:
             except Exception as exc:  # a UI sink must never break the tick
                 self._log.warning("tick.transition_sink_failed", error=str(exc))
         return updated
+
+    def _block(self, project: Project, reason: str) -> Project:
+        """Move ``project`` to BLOCKED and record a human-readable reason."""
+        self._d.project_repo.set_status_detail(project.id, reason[:500])
+        return self._move(project, ProjectState.BLOCKED)
 
 
 def _last_done(milestones: list[Milestone]) -> Milestone | None:

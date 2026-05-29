@@ -205,7 +205,94 @@ def test_spend_endpoint_without_repo_returns_zeros() -> None:
         response = client.get("/api/spend")
     assert response.status_code == 200
     body = response.json()
-    assert body == {"daily_tokens": 0, "daily_cost_usd": 0.0, "by_role": []}
+    assert body == {
+        "daily_tokens": 0,
+        "daily_cost_usd": 0.0,
+        "all_time_tokens": 0,
+        "all_time_cost_usd": 0.0,
+        "by_role": [],
+        "by_project": [],
+    }
+
+
+def test_spend_endpoint_reports_all_time_and_by_project() -> None:
+    from uuid import uuid4
+
+    settings = Settings(AIDEVSWARM_API_HOST="127.0.0.1", AIDEVSWARM_API_PORT=18080)
+    project_repo = InMemoryProjectRepo()
+    proj = project_repo.create(Project(name="widget", spec=_spec()))
+    token_repo = InMemoryTokenLogRepo()
+    token_repo.record(
+        project_id=proj.id,
+        milestone_id=uuid4(),
+        role="Developer",
+        model="anthropic/claude-opus-4-7",
+        input_tokens=1000,
+        output_tokens=500,
+        cost_usd=0.30,
+    )
+    app = build_app(
+        settings=settings,
+        project_repo=project_repo,
+        milestone_repo=InMemoryMilestoneRepo(),
+        bridge=EventBridge(),
+        router=CommandRouter(
+            project_repo=project_repo,
+            steering_repo=_FakeSteeringRepo(),
+            kill_switch=InMemoryKillSwitch(),
+        ),
+        redactor=SecretRedactor(settings.redact_patterns),
+        token_repo=token_repo,
+    )
+    with TestClient(app) as client:
+        body = client.get("/api/spend").json()
+    assert body["all_time_cost_usd"] == 0.30
+    assert body["all_time_tokens"] == 1500
+    assert body["by_project"][0]["name"] == "widget"
+    assert body["by_project"][0]["cost_usd"] == 0.30
+
+
+def test_ideas_endpoint_returns_evaluations() -> None:
+    from aidevswarm.schemas import CriticScores, IdeaEvaluation
+    from tests.fakes import InMemoryIdeaEvaluationRepo
+
+    settings = Settings(AIDEVSWARM_API_HOST="127.0.0.1", AIDEVSWARM_API_PORT=18080)
+    idea_repo = InMemoryIdeaEvaluationRepo()
+    idea_repo.record(
+        IdeaEvaluation(
+            title="Great idea",
+            summary="s",
+            scores=CriticScores(
+                depth_ambition=90,
+                usefulness_niche=85,
+                novelty=80,
+                decomposability=85,
+                buildability=80,
+            ),
+            total=85,
+            accepted=True,
+            round=1,
+        )
+    )
+    app = build_app(
+        settings=settings,
+        project_repo=InMemoryProjectRepo(),
+        milestone_repo=InMemoryMilestoneRepo(),
+        bridge=EventBridge(),
+        router=CommandRouter(
+            project_repo=InMemoryProjectRepo(),
+            steering_repo=_FakeSteeringRepo(),
+            kill_switch=InMemoryKillSwitch(),
+        ),
+        redactor=SecretRedactor(settings.redact_patterns),
+        idea_repo=idea_repo,
+    )
+    with TestClient(app) as client:
+        ideas = client.get("/api/ideas").json()
+    assert len(ideas) == 1
+    assert ideas[0]["title"] == "Great idea"
+    assert ideas[0]["accepted"] is True
+    assert ideas[0]["scores"]["depth_ambition"] == 90
 
 
 def test_spend_endpoint_reports_per_role_breakdown() -> None:

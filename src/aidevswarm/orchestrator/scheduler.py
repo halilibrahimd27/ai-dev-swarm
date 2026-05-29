@@ -182,6 +182,12 @@ class ProjectPool:
                 )
                 try:
                     self._repo.update_state(project.id, ProjectState.BLOCKED)
+                    # Record WHY so the operator sees it in the web panel.
+                    self._repo.set_status_detail(
+                        project.id,
+                        f"crashed in {project.state.value}: "
+                        f"{type(exc).__name__}: {str(exc)[:300]}",
+                    )
                 except Exception as inner:
                     # Even the safety-net move can race; log + continue.
                     self._log.error(
