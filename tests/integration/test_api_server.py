@@ -417,3 +417,111 @@ def test_static_ui_mounted_when_directory_exists(tmp_path: Path) -> None:
         response = client.get("/")
     assert response.status_code == 200
     assert "<h1>hi</h1>" in response.text
+
+
+# ---------------------------------------------------------------------------
+# Auth guard — Origin/CSRF + optional bearer token
+# ---------------------------------------------------------------------------
+
+
+def _build_with_token(token: str) -> Any:
+    settings = Settings(
+        AIDEVSWARM_API_HOST="127.0.0.1",
+        AIDEVSWARM_API_PORT=18080,
+        AIDEVSWARM_API_TOKEN=token,
+    )
+    project_repo = InMemoryProjectRepo()
+    return build_app(
+        settings=settings,
+        project_repo=project_repo,
+        milestone_repo=InMemoryMilestoneRepo(),
+        bridge=EventBridge(),
+        router=CommandRouter(
+            project_repo=project_repo,
+            steering_repo=_FakeSteeringRepo(),
+            kill_switch=InMemoryKillSwitch(),
+        ),
+        redactor=SecretRedactor(settings.redact_patterns),
+    )
+
+
+def test_cross_origin_post_is_refused() -> None:
+    app, project_repo, *_ = _build()
+    project = project_repo.create(Project(name="p", spec=_spec()))
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/commands",
+            headers={"origin": "http://evil.example"},
+            json={"intent": "inject_note", "project_id": str(project.id), "body": "x"},
+        )
+    assert response.status_code == 403
+
+
+def test_same_origin_post_is_allowed() -> None:
+    app, project_repo, _, steering, _ = _build()
+    project = project_repo.create(Project(name="p", spec=_spec()))
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/commands",
+            headers={"origin": "http://127.0.0.1:18080"},
+            json={"intent": "inject_note", "project_id": str(project.id), "body": "ok"},
+        )
+    assert response.status_code == 200, response.text
+    assert len(steering.notes) == 1
+
+
+def test_token_required_for_post_when_configured() -> None:
+    app = _build_with_token("s3cret")
+    with TestClient(app) as client:
+        # No Authorization header -> 401.
+        missing = client.post("/api/commands", json={"intent": "list_state"})
+        assert missing.status_code == 401
+        # Wrong token -> 401.
+        wrong = client.post(
+            "/api/commands",
+            headers={"authorization": "Bearer nope"},
+            json={"intent": "list_state"},
+        )
+        assert wrong.status_code == 401
+        # Correct token -> dispatched.
+        ok = client.post(
+            "/api/commands",
+            headers={"authorization": "Bearer s3cret"},
+            json={"intent": "list_state"},
+        )
+        assert ok.status_code == 200
+
+
+def test_get_endpoints_open_even_with_token() -> None:
+    app = _build_with_token("s3cret")
+    with TestClient(app) as client:
+        assert client.get("/api/projects").status_code == 200
+        assert client.get("/healthz").status_code == 200
+
+
+def test_index_injects_api_token_meta(tmp_path: Path) -> None:
+    ui = tmp_path / "ui"
+    ui.mkdir()
+    (ui / "index.html").write_text("<html><head></head><body>x</body></html>", encoding="utf-8")
+    settings = Settings(
+        AIDEVSWARM_API_HOST="127.0.0.1",
+        AIDEVSWARM_API_PORT=18080,
+        AIDEVSWARM_API_TOKEN="tok123",
+    )
+    project_repo = InMemoryProjectRepo()
+    app = build_app(
+        settings=settings,
+        project_repo=project_repo,
+        milestone_repo=InMemoryMilestoneRepo(),
+        bridge=EventBridge(),
+        router=CommandRouter(
+            project_repo=project_repo,
+            steering_repo=_FakeSteeringRepo(),
+            kill_switch=InMemoryKillSwitch(),
+        ),
+        redactor=SecretRedactor(settings.redact_patterns),
+        ui_dir=ui,
+    )
+    with TestClient(app) as client:
+        html = client.get("/").text
+    assert '<meta name="api-token" content="tok123">' in html

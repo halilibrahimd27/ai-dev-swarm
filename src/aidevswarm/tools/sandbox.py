@@ -166,7 +166,12 @@ class SubprocessSandbox:
         ]
 
     def _sh(self, cmd: list[str], cwd: Path, *, extra_path: str | None = None) -> tuple[int, str]:
-        env = dict(os.environ)
+        # Untrusted generated code runs here (pytest imports the project's
+        # conftest/build hooks). It must NOT inherit the orchestrator's
+        # secrets — pass only a minimal, secret-free environment. True
+        # network isolation still requires sandbox_mode=docker; see the
+        # class docstring + THREAT_MODEL.
+        env = _scrubbed_env()
         if extra_path:
             env["PATH"] = extra_path + os.pathsep + env.get("PATH", "")
         proc = subprocess.run(
@@ -197,6 +202,37 @@ class InMemorySandbox:
         if flag_path.is_file() and flag_path.read_text().strip() == "fail":
             return SandboxRun(passed=False, stdout="", stderr="forced fail", exit_code=1)
         return SandboxRun(passed=True, stdout="ok", stderr="", exit_code=0)
+
+
+# Environment variables the CI subprocess is allowed to see. Everything
+# else from the orchestrator's environment — crucially every secret
+# (ANTHROPIC_API_KEY, GITHUB_TOKEN, TELEGRAM_*, POSTGRES_*, AIDEVSWARM_*)
+# — is dropped, so untrusted generated code can't read them.
+_SANDBOX_ENV_ALLOW = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TERM",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "SYSTEMROOT",  # Windows: many tools break without it
+    }
+)
+
+
+def _scrubbed_env() -> dict[str, str]:
+    """A minimal, secret-free environment for the CI subprocess."""
+    env = {k: v for k, v in os.environ.items() if k in _SANDBOX_ENV_ALLOW}
+    # Keep venvs hermetic and predictable regardless of the host shell.
+    env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+    return env
 
 
 def _source_dirs(ws: Path) -> list[str]:

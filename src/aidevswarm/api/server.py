@@ -28,15 +28,17 @@ the Scheduler and ProjectPool.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import TypeAdapter, ValidationError
 from sse_starlette.sse import EventSourceResponse
@@ -55,6 +57,28 @@ from aidevswarm.schemas import Command, Milestone, Project
 from aidevswarm.settings import Settings
 
 _COMMAND_ADAPTER: TypeAdapter[Command] = TypeAdapter(Command)
+
+# Hostnames a browser Origin/Host may legitimately carry for a loopback-only
+# server. A cross-site page (evil.com) or a DNS-rebinding name resolving to
+# 127.0.0.1 carries a DIFFERENT origin host, so this set defeats both.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0"})  # nosec B104
+# State-changing methods that must pass the Origin guard + token check.
+_MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _origin_host(value: str | None) -> str | None:
+    """Hostname of an Origin/Referer header value, or None if absent."""
+    if not value:
+        return None
+    return urlsplit(value).hostname
+
+
+def _bearer_token(value: str | None) -> str | None:
+    """The token from an ``Authorization: Bearer <token>`` header."""
+    if not value:
+        return None
+    prefix = "bearer "
+    return value[len(prefix) :].strip() if value.lower().startswith(prefix) else None
 
 
 def build_app(
@@ -83,6 +107,36 @@ def build_app(
         # so the operator can copy it from /docs.
         servers=[{"url": f"http://{settings.api_host}:{settings.api_port}"}],
     )
+
+    api_token = settings.api_token.get_secret_value() if settings.api_token else None
+
+    # ------------------------------------------------------------------
+    # Auth guard — Origin/CSRF + optional bearer token
+    # ------------------------------------------------------------------
+    # The control plane is loopback-only, but loopback alone does NOT stop a
+    # malicious web page (cross-site POST, or DNS-rebinding) from driving the
+    # API via the operator's browser. For every state-changing request we:
+    #   1. reject a cross-origin request (Origin host not loopback), and
+    #   2. require a bearer token when AIDEVSWARM_API_TOKEN is set.
+    # GET/SSE stay open: cross-origin reads are already blocked by the
+    # same-origin policy (we emit no CORS headers).
+
+    @app.middleware("http")
+    async def _auth_guard(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        if request.method in _MUTATING_METHODS:
+            origin_host = _origin_host(request.headers.get("origin"))
+            if origin_host is not None and origin_host not in _LOOPBACK_HOSTS:
+                log.warning("api.cross_origin_refused", origin_host=origin_host)
+                return JSONResponse(status_code=403, content={"detail": "cross-origin refused"})
+            if api_token is not None:
+                provided = _bearer_token(request.headers.get("authorization"))
+                if provided is None or not hmac.compare_digest(provided, api_token):
+                    return JSONResponse(
+                        status_code=401, content={"detail": "missing or invalid API token"}
+                    )
+        return await call_next(request)
 
     # ------------------------------------------------------------------
     # Health
@@ -221,6 +275,26 @@ def build_app(
     # ------------------------------------------------------------------
 
     if ui_dir is not None and ui_dir.exists():
+        index_path = ui_dir / "index.html"
+
+        async def _serve_index() -> HTMLResponse:
+            """Serve index.html, injecting the API token (loopback only).
+
+            The token is placed in a ``<meta name="api-token">`` tag the UI
+            reads to authenticate its POSTs. Serving it to the local browser
+            is acceptable — the server is loopback-only. When no token is
+            configured the page is served unchanged.
+            """
+            html = await asyncio.to_thread(index_path.read_text, "utf-8")
+            if api_token is not None:
+                meta = f'<meta name="api-token" content="{api_token}">'
+                html = html.replace("</head>", f"  {meta}\n</head>", 1)
+            return HTMLResponse(html)
+
+        # Registered before the StaticFiles mount so the injected index wins
+        # over the raw file for "/" and "/index.html".
+        app.get("/")(_serve_index)
+        app.get("/index.html")(_serve_index)
         app.mount("/", StaticFiles(directory=str(ui_dir), html=True), name="ui")
 
     return app

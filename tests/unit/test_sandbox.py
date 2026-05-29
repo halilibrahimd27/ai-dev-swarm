@@ -17,8 +17,27 @@ from aidevswarm.tools.sandbox import (
     InMemorySandbox,
     SandboxRun,
     SubprocessSandbox,
+    _scrubbed_env,
     _source_dirs,
 )
+
+
+def test_scrubbed_env_drops_secrets() -> None:
+    secrets = {
+        "ANTHROPIC_API_KEY": "sk-ant-x",
+        "GITHUB_TOKEN": "ghp_x",
+        "POSTGRES_PASSWORD": "p",
+        "TELEGRAM_BOT_TOKEN": "t",
+        "AIDEVSWARM_API_TOKEN": "tok",
+    }
+    with mock.patch.dict(
+        "os.environ", {**secrets, "PATH": "/usr/bin", "HOME": "/home/x"}, clear=True
+    ):
+        env = _scrubbed_env()
+    for key in secrets:
+        assert key not in env
+    assert env["PATH"] == "/usr/bin"
+    assert env["HOME"] == "/home/x"
 
 
 def test_in_memory_sandbox_default_passes(tmp_path: Path) -> None:

@@ -10,6 +10,11 @@
 
   const ROUTES = ["dashboard", "transcript", "evaluations", "spend", "settings", "activity"];
 
+  // The server injects the API token into a <meta name="api-token"> tag when
+  // AIDEVSWARM_API_TOKEN is set; mutating requests must carry it. Empty when
+  // no token is configured (loopback + Origin guard then suffice).
+  const API_TOKEN = (document.querySelector('meta[name="api-token"]') || {}).content || "";
+
   const state = {
     projects: [],
     selected: null,
@@ -838,9 +843,11 @@
 
   async function sendCommand(payload) {
     try {
+      const headers = { "content-type": "application/json" };
+      if (API_TOKEN) headers["authorization"] = "Bearer " + API_TOKEN;
       const res = await fetch("/api/commands", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: headers,
         body: JSON.stringify(payload),
       });
       const body = await res.json();

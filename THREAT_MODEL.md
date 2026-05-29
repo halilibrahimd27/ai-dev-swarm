@@ -97,16 +97,19 @@ code — and the isolation depends on `AIDEVSWARM_SANDBOX_MODE`
   no Docker socket). `SubprocessSandbox` creates a throwaway `uv` venv,
   `uv pip install`s the generated project **with its declared
   dependencies**, then runs `ruff` + `mypy --strict` + `pytest` **inside the
-  orchestrator's own container**, which **has network** and **has the
-  orchestrator's environment** (including `ANTHROPIC_API_KEY`,
-  `GITHUB_TOKEN`, `POSTGRES_PASSWORD`).
+  orchestrator's own container**, which **has network** but runs with a
+  **scrubbed, secret-free environment** — `_scrubbed_env()` passes only an
+  allow-list (`PATH`, `HOME`, `LANG`, `TMPDIR`, …) and drops every secret
+  (`ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `POSTGRES_*`, `TELEGRAM_*`,
+  `AIDEVSWARM_*`). Network is still present; true network isolation needs
+  `docker` mode.
 - **`inmemory`** — no execution at all; CI is a free pass (last resort,
   quality then rests on the Reviewer LLM alone).
 
 | Threat | Vector | Mitigation |
 | --- | --- | --- |
 | (E) gen code executes in-process (`subprocess` mode) | `pytest` imports + runs the generated module; a `pyproject` build/install hook runs on `uv pip install` | **Accepted trade-off for a single-operator local system.** The code was authored by Claude (non-adversarial by assumption) and the only consumer is the operator. The gain over `inmemory` is that tests *actually run*, catching broken/garbage milestones that the old free-pass shipped blind. **For real isolation set `AIDEVSWARM_SANDBOX_MODE=docker`** — network-less, read-only, secret-free container. |
-| (I) gen code reads orchestrator secrets (`subprocess` mode) | `os.environ` is visible to in-process test code | Same trade-off; `docker` mode removes secrets from the gate entirely. The orchestrator container is on the docker bridge, never exposed to the LAN, so exfil requires both adversarial gen code AND outbound network. |
+| (I) gen code reads orchestrator secrets (`subprocess` mode) | `os.environ` is visible to in-process test code | **The CI subprocess env is scrubbed** (`sandbox._scrubbed_env`): only a safe allow-list is passed and every secret is dropped, so generated code can't read `ANTHROPIC_API_KEY`/`GITHUB_TOKEN`/`POSTGRES_*`/`TELEGRAM_*`. Network is still present in `subprocess` mode; `docker` mode additionally removes the network. |
 | (T) malicious/typosquatted dependency pulled at install (`subprocess` mode) | generated `pyproject.toml` declares a hostile package; `uv pip install` fetches it with network | Bounded by the same non-adversarial-author assumption; `docker` mode isolates the install in a network-less container. Prompt-injection into the Developer is mitigated by the role's fixed `allowed_tools` allow-list (see the Claude Agent SDK rows above). |
 | (D) gen test suite hangs / loops | infinite loop in generated tests | Per-run `timeout_seconds` (default 1800s) on the subprocess; the build crew records a CI failure on timeout (`SandboxRun(exit_code=124)`) and the milestone retries/blocks |
 
@@ -150,8 +153,9 @@ code — and the isolation depends on `AIDEVSWARM_SANDBOX_MODE`
 | Threat | Vector | Mitigation |
 | --- | --- | --- |
 | (S) network attacker reaches API | LAN | `AIDEVSWARM_API_HOST` validator refuses LAN IPs; docker publish is `127.0.0.1:8080:8080` only — see `settings.py::_enforce_loopback` |
-| (T) cross-site request forgery | Browser pages on same host | Strict CSP (`default-src 'self'`); no inline `eval`; no third-party scripts |
-| (T) inline scripts | — | CSP rejects them; the UI is vanilla JS with no eval |
+| (T) cross-site request forgery / DNS-rebinding | A malicious web page drives the loopback API via the operator's browser | **`_auth_guard` middleware** (`api/server.py`): every state-changing request (POST/PUT/PATCH/DELETE) is refused when the `Origin` host is not loopback, so a cross-site or DNS-rebound page (whose Origin is its own domain) cannot POST. Cross-origin GET/SSE reads are independently blocked by the same-origin policy (no CORS headers emitted). |
+| (S) any local process drives the API | Another process on the operator's host | Optional `AIDEVSWARM_API_TOKEN`: when set, state-changing requests must carry `Authorization: Bearer <token>` (constant-time compared). The web UI receives the token via a `<meta>` tag injected into `index.html` at serve time (loopback only). |
+| (T) inline / third-party scripts | — | Strict CSP (`default-src 'self'`); no inline `eval`; vanilla JS, no CDNs |
 | (I) SSE leaks secret | — | `SecretRedactor` wraps every outbound SSE event in `_emit` |
 
 ### MCP servers (tree-sitter-mcp)
