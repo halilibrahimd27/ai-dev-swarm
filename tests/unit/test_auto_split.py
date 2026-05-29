@@ -22,7 +22,7 @@ def _settings(turns: int = 40, cost: float = 3.0) -> Settings:
     )
 
 
-def _milestone(criteria_n: int = 2) -> Milestone:
+def _milestone(criteria_n: int = 2, *, technical_note: str = "") -> Milestone:
     criteria = [
         AcceptanceCriterion(description=f"crit {i}", verifier="pytest") for i in range(criteria_n)
     ]
@@ -30,7 +30,9 @@ def _milestone(criteria_n: int = 2) -> Milestone:
         project_id=uuid4(),
         ordinal=0,
         title="m",
-        spec=MilestoneSpec(title="m", description="d", acceptance_criteria=criteria),
+        spec=MilestoneSpec(
+            title="m", description="d", acceptance_criteria=criteria, technical_note=technical_note
+        ),
     )
 
 
@@ -71,15 +73,25 @@ def test_too_expensive_triggers_split() -> None:
     assert len(out.into[1].acceptance_criteria) == 1
 
 
-def test_split_falls_back_to_description_when_few_criteria() -> None:
+def test_no_split_when_fewer_than_two_criteria() -> None:
+    """A milestone with <2 criteria can't be mechanically shrunk — auto-split
+    must back off (returning None) so the LLM replanner / retry-block path
+    handles it instead of looping on an unchanged scope."""
     repo = FakeMilestoneSessionRepo()
-    m = _milestone(criteria_n=0)
-    repo.record(milestone_id=m.id, role="Developer", session_id="s3", cost_usd=10.0, turns=5)
-    out = AutoSplitPredictor(_settings(), repo).predict(m)
-    assert isinstance(out, Split)
-    assert len(out.into[0].acceptance_criteria) == 1
-    assert "First half" in out.into[0].acceptance_criteria[0].description
-    assert "Second half" in out.into[1].acceptance_criteria[0].description
+    for n in (0, 1):
+        m = _milestone(criteria_n=n)
+        repo.record(milestone_id=m.id, role="Developer", session_id=f"s{n}", cost_usd=10.0, turns=5)
+        assert AutoSplitPredictor(_settings(), repo).predict(m) is None
+
+
+def test_no_resplit_of_already_split_child() -> None:
+    """An over-budget milestone that is ITSELF an auto-split child is never
+    re-split — this is the guard against the runaway `(part 1)(part 1)...`
+    loop that doubled the milestone count and burned budget."""
+    repo = FakeMilestoneSessionRepo()
+    m = _milestone(criteria_n=4, technical_note="use uv [AUTO-SPLIT 1/2]")
+    repo.record(milestone_id=m.id, role="Developer", session_id="s1", cost_usd=99.0, turns=99)
+    assert AutoSplitPredictor(_settings(), repo).predict(m) is None
 
 
 def test_split_marks_children_with_auto_split_note() -> None:
