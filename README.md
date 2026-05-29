@@ -138,36 +138,79 @@ Developer/Tester use Opus (expensive).
 
 1. Open https://github.com/settings/tokens.
 2. **Generate new token (classic)**.
-3. Scopes: `public_repo` (or `repo` for private repos),
-   `read:user`.
+3. Scopes: **`repo`** (full control of private repositories) +
+   `read:user`. ai-dev-swarm creates each project's repo **private**
+   on the first build, so the narrower `public_repo` scope is **not**
+   enough — pick `repo`.
 4. Paste into `.env`:
    ```
    GITHUB_TOKEN=ghp_...
-   GITHUB_OWNER=your-github-username
+   GITHUB_OWNER=your-github-username   # the account the repos are created under
    ```
 
-Without these, the orchestrator still builds projects — it just
-can't publish them. They live in `./workspaces/<project>/` until
-you decide what to do with them.
+**How publishing works.** On the first build of an approved project the
+orchestrator creates a **private** repo named after the project under
+`GITHUB_OWNER`, wires a credential-less remote, and then **pushes
+`main` after every committed milestone** — so the repo grows in real
+time over the days/weeks the build runs. `AIDEVSWARM_GITHUB_MODE`
+controls the endgame:
+
+- `pr_only` (default) — milestones land on `main`; you review.
+- `auto_merge` — the swarm is trusted to merge its own work. Only flip
+  this once you trust it.
+
+**Commit authorship.** Every commit in a generated repo is stamped with
+your identity, never Claude's (the "Co-Authored-By: Claude" trailer is
+disabled at the SDK layer). By default the author is `GITHUB_OWNER` +
+`<owner>@users.noreply.github.com`. To make GitHub *attribute* the
+commits to your account, set `AIDEVSWARM_GIT_AUTHOR_EMAIL` to a
+**verified** email on your account (or your
+`<id>+<username>@users.noreply.github.com` form from
+github.com/settings/emails), and optionally `AIDEVSWARM_GIT_AUTHOR_NAME`.
+
+**Without a token**, the orchestrator still builds projects — it just
+can't publish them. They live in `./workspaces/<project>/` as real git
+repos (already committed milestone-by-milestone) until you decide what
+to do with them.
 
 ### Telegram bot (optional)
 
-1. DM **@BotFather** on Telegram. Send `/newbot`. It gives you a
-   token like `1234567:ABC-DEF...`.
-2. Send `/start` to your new bot.
-3. Visit `https://api.telegram.org/bot<TOKEN>/getUpdates` and copy
-   `result[0].message.chat.id`. That's your `TELEGRAM_CHAT_ID`.
-4. To use the bidirectional control bot (free-form natural-language
-   commands), find your user ID by chatting with **@userinfobot**
-   and add it to the allow-list:
+The bot is **polling-mode** — it dials out to `api.telegram.org`, so
+there is **no webhook and no inbound port** to expose.
+
+1. DM **@BotFather** on Telegram. Send `/newbot`, follow the prompts.
+   It gives you a token like `1234567:ABC-DEF...` → `TELEGRAM_BOT_TOKEN`.
+2. Send `/start` to your new bot (so it has a chat to reply to).
+3. **One-way alerts** ("project shipped", "milestone blocked",
+   "awaiting approval"): visit
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` and copy
+   `result[0].message.chat.id` → `TELEGRAM_CHAT_ID`.
+4. **Two-way control** (issue commands back): find your numeric user ID
+   by chatting with **@userinfobot**, then add it to the allow-list.
+   The allow-list is the *only* auth — an **empty list locks the bot
+   down** and every non-listed user is silently denied.
    ```
    TELEGRAM_BOT_TOKEN=1234567:ABC-DEF...
    TELEGRAM_CHAT_ID=<your-chat-id>
-   AIDEVSWARM_TELEGRAM_ALLOWED_USER_IDS=<your-user-id>
+   AIDEVSWARM_TELEGRAM_ALLOWED_USER_IDS=<your-user-id>   # comma-separated for several
    ```
 
-Without these, ai-dev-swarm runs fine — it just logs to stdout
-instead of sending you notifications.
+**Talking to the bot.** Slash commands: `/help` (usage), `/list`
+(active projects), `/kill` (global kill switch). Or just type what you
+want in plain English — a cheap Haiku pass
+(`AIDEVSWARM_HAIKU_MODEL`) turns it into a typed command:
+
+> `approve project <id>` · `pause this project` · `resume it` ·
+> `rescope to <new scope>` · `note: focus on test coverage` ·
+> `switch to idea <id>`
+
+**Destructive** commands (abort, rescope, kill, …) never fire on the
+first message — the bot echoes what it understood with a **[Yes] [No]**
+inline keyboard and only acts after you tap **Yes**.
+
+Without any Telegram config, ai-dev-swarm runs fine — it just logs to
+stdout instead of messaging you, and you drive it entirely from the web
+panel.
 
 ---
 
@@ -211,14 +254,14 @@ realistically tune:
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `AIDEVSWARM_DAILY_TOKEN_BUDGET` | `2_000_000` | Soft cap on tokens spent per UTC day across ALL projects. |
-| `AIDEVSWARM_PER_MILESTONE_TOKEN_BUDGET` | `400_000` | Hard cap per milestone — circuit breaker, not a deadline. |
+| `AIDEVSWARM_PER_MILESTONE_TOKEN_BUDGET` | `1_000_000` | Hard cap per milestone — circuit breaker, not a deadline. |
 | `AIDEVSWARM_BUILD_CONCURRENCY` | `1` | How many projects build in parallel. Cost scales linearly. |
 | `AIDEVSWARM_REQUIRE_APPROVAL` | `true` | An accepted idea is planned, then **parks at `awaiting_approval` until you approve it** (web UI or Telegram) before any coding/pushing. Set `false` for **fully-autonomous** operation — the swarm codes + pushes with no human gate. Keep `true` unless you fully trust the swarm and your budget. |
 | `AIDEVSWARM_IDEATION_MIN_SCORE` | `80` | An idea must score ≥ this (and be novel) to become a project. |
 | `AIDEVSWARM_IDEATION_MAX_ROUNDS` | `5` | If a round produces nothing past the gate, re-ideate up to this many times. |
-| `AIDEVSWARM_SANDBOX_MODE` | `docker` | `docker` runs each milestone's tests in an ephemeral, network-less container (needs the host Docker socket + the sandbox image). `inmemory` skips it (CI = pass; quality rests on the Reviewer) — used by the bundled compose stack since the orchestrator container has no Docker socket. |
+| `AIDEVSWARM_SANDBOX_MODE` | `docker` (settings) / `subprocess` (compose) | The CI gate that runs each milestone's generated code. `docker` = ephemeral, **network-less, read-only** container (most isolated; needs the host Docker socket + the `aidevswarm-sandbox` image). `subprocess` = installs the project into a throwaway `uv` venv and runs ruff + mypy + pytest **in the orchestrator container** (real tests, no socket needed; less isolated — this is the **bundled compose default** because the orchestrator has no socket). `inmemory` = CI auto-passes (last resort; quality rests on the Reviewer). See [THREAT_MODEL.md](THREAT_MODEL.md#ci-sandbox-generated-code-gate) for the subprocess trade-off. |
 | `AIDEVSWARM_GITHUB_MODE` | `pr_only` | `pr_only` opens PRs; `auto_merge` lands them. Stay in `pr_only` until you trust the swarm. |
-| `AIDEVSWARM_AUTO_SPLIT_MAX_TURNS` | `40` | Auto-split fires when predicted SDK turns exceed this. |
+| `AIDEVSWARM_AUTO_SPLIT_MAX_TURNS` | `30` | Auto-split fires when predicted SDK turns exceed this. |
 | `AIDEVSWARM_AUTO_SPLIT_MAX_COST_USD` | `3.0` | Auto-split fires when predicted milestone cost exceeds this. |
 | `AIDEVSWARM_CONSOLIDATION_EVERY` | `5` | Every Nth success, inject a tidy + verify milestone. |
 | `AIDEVSWARM_TELEGRAM_ALLOWED_USER_IDS` | (empty) | Comma-separated Telegram user IDs that can issue commands. Empty = locked. |
@@ -229,20 +272,39 @@ See [`.env.example`](.env.example) for the full list (34 variables).
 
 ## Operating
 
+You drive the swarm from the web panel at **http://127.0.0.1:8080** (or
+the Telegram bot). The panel has three live panes, all fed by SSE — no
+refresh needed:
+
+- **State** — every project, its current state machine step, milestone
+  progress (`3/10 done`), and the *why* behind a stuck project
+  (`blocked: milestone X failed 3×`, `awaiting your approval`). An
+  **Evaluations** tab shows each scored idea (rubric breakdown +
+  accept/reject reason).
+- **Transcript** — a chat-style stream of the agents working *as it
+  happens*: Developer/Tester thinking, tool calls, tool results,
+  Reviewer verdicts, plus build markers (`milestone_start`, `ci_passed`,
+  `review_done`). Filter by role; toggle autoscroll.
+- **Controls + spend** — the action buttons below, and a **spend panel**:
+  today's cost broken down per role, plus all-time cost per project
+  (answers "where did the money go").
+
 | Action | How |
 | --- | --- |
-| **Stop everything** | `docker compose down` |
-| **Wipe + restart** | `docker compose down -v && docker compose up -d` |
-| **Tail logs** | `docker compose logs -f orchestrator` |
-| **Kill one project** | Web panel → select project → **Abort** (confirms). |
-| **Global kill switch** | Web panel → **Kill switch** (confirms) — or set `aidevswarm:kill_switch` directly in Redis. |
-| **Pause** | Web panel → **Pause**. Reversible; the project stays in its current state until **Resume**. |
-| **Steer mid-flight** | Web panel → transcript pane → "steer" text box. Or `/note <text>` to the Telegram bot. |
-| **Approve a plan** | Web panel → **Approve**. Or `/approve` in Telegram. |
-| **Re-scope** | Web panel → controls → enter new scope → **Rescope** (destructive; confirms). Writes an `[OPERATOR RESCOPE]` steering note that the replanner picks up next pass. |
+| **Ideate now** | Web panel → **Ideate now**. The scheduled ideation cron only fires every 24h and only when idle; this button triggers a round immediately. The winning idea is queued (and, if `require_approval`, parks at `awaiting_approval`). |
+| **Approve a plan** | Web panel → **Approve**. Or tap **Approve** on the Telegram message / type `approve project <id>`. Only needed when `AIDEVSWARM_REQUIRE_APPROVAL=true` (the default). |
+| **Pause** | Web panel → **Pause**. Reversible — the project stays in its current state and idles until **Resume**. Use this (not the kill switch) to halt a project you intend to continue. |
+| **Resume** | Web panel → **Resume**. Clears the pause and continues from exactly where it left off; also revives a `blocked` project to retry. |
+| **Kill one project** | Web panel → select project → **Abort** (destructive; confirms). Terminal — the project becomes `killed`. |
+| **Global kill switch** | Web panel → **Kill switch** (destructive; confirms). Or `/kill` in Telegram, or set `aidevswarm:kill_switch` directly in Redis. Checked every tick. |
+| **Steer mid-flight** | Web panel → transcript pane → "steer" text box. Or `note: <text>` to the Telegram bot. The Developer SDK picks it up on its NEXT tool call without restarting. |
+| **Re-scope** | Web panel → controls → enter new scope → **Rescope** (destructive; confirms). Writes an `[OPERATOR RESCOPE]` steering note the replanner picks up next pass. |
 | **Switch to a different idea** | Telegram → free-form text "switch to idea <id>" → confirm. |
-| **Look at a project's code** | `cd ./workspaces/<project>` — it's a real git repo. |
-| **Look at the trace tree** | Phoenix at http://localhost:6006. |
+| **Stop everything** | `docker compose down` (volumes — and your projects — survive). |
+| **Wipe + restart** | `docker compose down -v && docker compose up -d` (⚠ `-v` deletes the Postgres/Redis/Phoenix volumes; `./workspaces/` on disk is untouched). |
+| **Tail logs** | `docker compose logs -f orchestrator` |
+| **Look at a project's code** | `cd ./workspaces/<project>` — it's a real git repo, committed milestone-by-milestone. |
+| **Look at the trace tree** | Phoenix at http://localhost:6006 (CrewAI task → SDK invocation → tool call → MCP call). |
 
 ---
 
