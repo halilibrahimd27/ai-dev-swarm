@@ -34,11 +34,37 @@
         <div class="view-head">
           <h2>Dashboard</h2>
           <div class="global-actions">
+            <button id="toggle-new-project">new project</button>
             <button data-intent="ideate_now">ideate now</button>
             <button data-intent="kill_switch" class="danger">kill switch</button>
           </div>
         </div>
-        <p class="view-hint">Pick a project to watch its agents work. “ideate now” fires the ideation crew until an idea clears the gate.</p>
+
+        <div class="stat-row" id="dashboard-stats" aria-label="At-a-glance">
+          <div class="stat"><span class="stat-num" id="stat-total">0</span><span class="stat-cap">projects</span></div>
+          <div class="stat"><span class="stat-num" id="stat-active">0</span><span class="stat-cap">in flight</span></div>
+          <div class="stat"><span class="stat-num" id="stat-await">0</span><span class="stat-cap">awaiting approval</span></div>
+          <div class="stat"><span class="stat-num" id="stat-blocked">0</span><span class="stat-cap">blocked</span></div>
+          <div class="stat"><span class="stat-num" id="stat-spend-today">$0</span><span class="stat-cap">today</span></div>
+        </div>
+
+        <form class="new-project" id="new-project-form" hidden>
+          <h3>Tell the swarm what to build</h3>
+          <p class="new-project-hint">Bypasses Scout / Ideator / Critic — your idea goes straight to planning. Title becomes the repo name (slug). Required: title + summary.</p>
+          <label>Title<input id="np-title" type="text" maxlength="120" required placeholder="OpenAPI Spec Linter for Generated Stubs" /></label>
+          <label>Summary<textarea id="np-summary" maxlength="600" required rows="2" placeholder="One paragraph: what is it, who uses it, why does it exist?"></textarea></label>
+          <label>Rationale <span class="opt">(optional)</span><textarea id="np-rationale" maxlength="600" rows="2" placeholder="Why is this worth a multi-day build?"></textarea></label>
+          <div class="np-row">
+            <label>Stack <span class="opt">comma-separated</span><input id="np-stack" type="text" placeholder="python, typer, sqlite" /></label>
+            <label>Tags <span class="opt">comma-separated</span><input id="np-tags" type="text" placeholder="cli, linter, openapi" /></label>
+          </div>
+          <div class="np-actions">
+            <button type="submit">submit idea</button>
+            <button type="button" class="ghost" id="np-cancel">cancel</button>
+          </div>
+        </form>
+
+        <p class="view-hint">Pick a project to watch its agents work. “ideate now” fires the ideation crew until an idea clears the gate; “new project” lets you hand-author one.</p>
         <ul id="project-list" class="project-list"></ul>
       </section>
 

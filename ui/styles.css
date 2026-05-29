@@ -15,7 +15,11 @@
   --purple: #c8a6ff;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 18px rgba(0, 0, 0, 0.22);
   --radius: 8px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  /* Sans for body text (polished, readable), mono for code + raw output.
+     The :root no longer pins a font-family — body picks --font-sans. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
 * { box-sizing: border-box; }
@@ -27,9 +31,20 @@ body {
     radial-gradient(1200px 600px at 80% -10%, rgba(90, 162, 255, 0.06), transparent 60%),
     var(--bg);
   color: var(--fg);
-  font-size: 13px;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* Mono lives where it earns its keep: raw output + code chips. */
+code, pre, .tool-chip, .tool-args, .result-log, .kind-tool_result .msg-body,
+.kind-thinking .msg-body, .msg-body, input, select, textarea, button {
+  font-family: var(--font-sans);
+}
+code, pre, .tool-chip, .tool-args, .result-log, .kind-tool_result .msg-body {
+  font-family: var(--font-mono);
 }
 
 /* Refined scrollbars (webkit) */
@@ -362,4 +377,70 @@ section { scrollbar-gutter: stable; }
 
 @media (max-width: 720px) {
   .setting-row { grid-template-columns: 1fr; gap: 0.25rem; }
+}
+
+/* -------------------------------------------------------------- dashboard */
+
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.5rem;
+  margin: 0.5rem 0 0.75rem;
+}
+.stat {
+  display: flex; flex-direction: column; gap: 0.15rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  box-shadow: var(--shadow);
+}
+.stat-num { font-size: 1.4rem; font-weight: 700; color: var(--fg); line-height: 1.2; letter-spacing: -0.01em; }
+.stat-cap { font-size: 0.66rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.stat:nth-child(5) .stat-num { color: var(--warn); }
+
+/* ------------------------------------------------- new-project form */
+
+.new-project {
+  display: flex; flex-direction: column; gap: 0.6rem;
+  padding: 1rem 1.1rem;
+  margin: 0 0 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  box-shadow: var(--shadow);
+}
+.new-project[hidden] { display: none; }
+.new-project h3 { margin: 0; font-size: 0.92rem; color: var(--fg); }
+.new-project-hint { margin: 0; font-size: 0.76rem; color: var(--muted); line-height: 1.5; }
+.new-project label {
+  display: flex; flex-direction: column; gap: 0.25rem;
+  font-size: 0.74rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;
+}
+.new-project label .opt { text-transform: none; letter-spacing: 0; color: var(--muted); font-size: 0.7rem; font-style: italic; }
+.new-project input, .new-project textarea {
+  padding: 0.5rem 0.6rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.85rem;
+  text-transform: none; letter-spacing: 0;
+}
+.new-project input:focus, .new-project textarea:focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim);
+}
+.new-project textarea { resize: vertical; min-height: 56px; }
+.np-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+.np-actions { display: flex; gap: 0.4rem; justify-content: flex-end; margin-top: 0.25rem; }
+
+/* -------------------------------------------------- typography polish */
+
+h2, h3, h4 { font-family: var(--font-sans); }
+.logo { font-family: var(--font-mono); }
+.transcript .msg-body { font-size: 0.86rem; }
+
+@media (max-width: 900px) {
+  .stat-row { grid-template-columns: repeat(2, 1fr); }
+  .np-row { grid-template-columns: 1fr; }
 }

@@ -38,6 +38,7 @@
     bindControls();
     bindSteerForm();
     bindToolbar();
+    bindNewProjectForm();
     window.addEventListener("hashchange", () => route(currentHashRoute()));
     route(currentHashRoute());
     tick();
@@ -122,16 +123,35 @@
   function renderProjects() {
     const ul = document.getElementById("project-list");
     ul.innerHTML = "";
+    renderDashboardStats();
     if (!state.projects.length) {
       const li = document.createElement("li");
       li.className = "empty";
-      li.textContent = "no projects yet — hit “ideate now”.";
+      li.textContent = "no projects yet — hit “ideate now” or “new project”.";
       ul.appendChild(li);
       return;
     }
     for (const p of state.projects) {
       ul.appendChild(buildProjectCard(p));
     }
+  }
+
+  function renderDashboardStats() {
+    const projects = state.projects;
+    const inFlight = projects.filter((p) =>
+      ["planning", "building", "replanning", "integration"].includes(p.state)
+    ).length;
+    const awaiting = projects.filter((p) => p.state === "awaiting_approval").length;
+    const blocked = projects.filter((p) => p.state === "blocked").length;
+    setText("stat-total", projects.length);
+    setText("stat-active", inFlight);
+    setText("stat-await", awaiting);
+    setText("stat-blocked", blocked);
+  }
+
+  function setText(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = String(value);
   }
 
   function buildProjectCard(p) {
@@ -546,6 +566,7 @@
     document.getElementById("spend-all").textContent = "all-time $" + all;
     document.getElementById("spend-today-big").textContent = "$" + today;
     document.getElementById("spend-all-big").textContent = "$" + all;
+    setText("stat-spend-today", "$" + today);
     fillSpendRows("spend-role-rows", (s.by_role || []).map((r) => [r.role, r.tokens, r.cost_usd]));
     fillSpendRows(
       "spend-project-rows",
@@ -736,6 +757,55 @@
     });
   }
 
+  function bindNewProjectForm() {
+    document.getElementById("toggle-new-project").addEventListener("click", () => {
+      toggleNewProjectForm();
+    });
+    document.getElementById("np-cancel").addEventListener("click", () => {
+      toggleNewProjectForm(false);
+    });
+    document.getElementById("new-project-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const payload = {
+        intent: "submit_idea",
+        title: val("np-title"),
+        summary: val("np-summary"),
+        rationale: val("np-rationale"),
+        stack: splitCsv(val("np-stack")),
+        tags: splitCsv(val("np-tags")),
+      };
+      const result = await sendCommand(payload);
+      if (result && result.ok) {
+        clearNewProjectForm();
+        toggleNewProjectForm(false);
+      }
+    });
+  }
+
+  function toggleNewProjectForm(show) {
+    const form = document.getElementById("new-project-form");
+    const open = typeof show === "boolean" ? show : form.hidden;
+    form.hidden = !open;
+    if (open) document.getElementById("np-title").focus();
+  }
+
+  function clearNewProjectForm() {
+    ["np-title", "np-summary", "np-rationale", "np-stack", "np-tags"].forEach((id) => {
+      document.getElementById(id).value = "";
+    });
+  }
+
+  function val(id) {
+    return document.getElementById(id).value.trim();
+  }
+
+  function splitCsv(s) {
+    return (s || "")
+      .split(",")
+      .map((x) => x.trim())
+      .filter((x) => x.length > 0);
+  }
+
   function bindToolbar() {
     document.getElementById("autoscroll").addEventListener("change", (e) => {
       state.autoscroll = e.target.checked;
@@ -776,8 +846,10 @@
       const body = await res.json();
       log(payload.intent + " → " + (body.detail || JSON.stringify(body)));
       refreshAll();
+      return body;
     } catch (err) {
       log("command failed: " + err);
+      return null;
     }
   }
 
