@@ -36,7 +36,9 @@ class _FakeSink:
 
 
 def _entry(topic: str = "transcript") -> TranscriptEntry:
-    return TranscriptEntry(topic=topic, project_id=uuid4(), role="Developer", kind="assistant", text="hi")  # type: ignore[arg-type]
+    return TranscriptEntry(
+        topic=topic, project_id=uuid4(), role="Developer", kind="assistant", text="hi"
+    )  # type: ignore[arg-type]
 
 
 def test_transcript_entry_is_persisted_and_forwarded() -> None:

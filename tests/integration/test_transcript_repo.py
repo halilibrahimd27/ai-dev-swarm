@@ -22,7 +22,9 @@ pytestmark = pytest.mark.integration
 
 
 def _spec() -> ProjectSpec:
-    return ProjectSpec(title="t", summary="s", rationale="r", stack=["python"], tags=["x"], score=85)
+    return ProjectSpec(
+        title="t", summary="s", rationale="r", stack=["python"], tags=["x"], score=85
+    )
 
 
 @pytest.fixture
@@ -35,7 +37,9 @@ def project_id(live_pool: ConnectionPool) -> Iterator[object]:
 
 
 def _entry(pid: object, kind: str, text: str) -> TranscriptEntry:
-    return TranscriptEntry(topic="transcript", project_id=pid, role="Developer", kind=kind, text=text)  # type: ignore[arg-type]
+    return TranscriptEntry(
+        topic="transcript", project_id=pid, role="Developer", kind=kind, text=text
+    )  # type: ignore[arg-type]
 
 
 def test_append_then_list_in_chronological_order(
@@ -83,9 +87,7 @@ def test_list_is_isolated_per_project(live_pool: ConnectionPool, project_id: obj
             cur.execute("DELETE FROM projects WHERE id = %s", (str(other.id),))
 
 
-def test_limit_returns_most_recent_in_order(
-    live_pool: ConnectionPool, project_id: object
-) -> None:
+def test_limit_returns_most_recent_in_order(live_pool: ConnectionPool, project_id: object) -> None:
     repo = PsycopgTranscriptRepo(live_pool)
     for i in range(5):
         repo.append(_entry(project_id, "assistant", f"m{i}"))
