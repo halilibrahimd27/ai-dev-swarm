@@ -266,3 +266,48 @@ button.danger:hover { background: rgba(255,107,97,0.1); }
 .eval-total { color: var(--accent); }
 section { scrollbar-gutter: stable; }
 .empty-hint, .view-hint { opacity: 0.85; }
+
+/* --------------------------------------------- conversation view (Phase: UI) */
+
+/* Segmented conversation/technical toggle. */
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg-btn { background: transparent; border: 0; color: var(--muted); padding: 0.18rem 0.55rem; font: inherit; font-size: 0.7rem; cursor: pointer; border-radius: 0; transition: color 0.12s, background 0.12s; }
+.seg-btn:hover { color: var(--fg); background: var(--accent-dim); }
+.seg-btn.active { color: var(--accent); background: var(--accent-dim); }
+.seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+
+/* Role avatar (initial in a role-coloured ring). */
+.avatar {
+  width: 18px; height: 18px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%; border: 1px solid currentColor;
+  font-size: 0.58rem; font-weight: 700;
+  background: rgba(255, 255, 255, 0.04); color: var(--muted);
+}
+
+/* Conversation mode hides the technical firehose; technical mode shows it. */
+.transcript.mode-conversation .kind-thinking,
+.transcript.mode-conversation .kind-tool_result { display: none; }
+.transcript.mode-conversation .tool-raw { display: none; }
+.transcript.mode-technical .tool-human { display: none; }
+.tool-human { color: var(--fg); font-size: 0.8rem; }
+
+/* Conversation bubbles read more like chat: roomier, softer. */
+.transcript.mode-conversation .msg { padding: 0.5rem 0.65rem; margin-bottom: 0.4rem; }
+.transcript.mode-conversation .msg.kind-tool_use,
+.transcript.mode-conversation .msg.kind-tool_done { background: transparent; box-shadow: none; border-left-color: var(--border-soft); padding: 0.3rem 0.65rem; }
+.transcript.mode-conversation .kind-tool_use .kind-badge,
+.transcript.mode-conversation .kind-tool_done .kind-badge { display: none; }
+
+/* Milestone / CI / review status markers — centered pills. */
+.marker { list-style: none; display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin: 0.6rem 0; }
+.marker-pill {
+  padding: 0.22rem 0.7rem; border-radius: 999px;
+  font-size: 0.74rem; font-weight: 600;
+  border: 1px solid var(--border); background: var(--panel-2); color: var(--muted);
+  box-shadow: var(--shadow);
+}
+.marker-ts { font-size: 0.62rem; color: var(--muted); }
+.marker.kind-milestone_start .marker-pill { color: var(--accent); border-color: var(--accent); }
+.marker.kind-ci_passed .marker-pill, .marker.kind-review_done .marker-pill { color: var(--ok); border-color: var(--ok); background: rgba(78, 201, 122, 0.08); }
+.marker.kind-ci_failed .marker-pill { color: var(--danger); border-color: var(--danger); background: rgba(255, 107, 97, 0.08); }

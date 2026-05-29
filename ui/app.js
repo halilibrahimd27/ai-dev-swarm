@@ -16,12 +16,22 @@
     roleFilter: "",
     autoscroll: true,
     view: "transcript",
+    mode: "conversation", // "conversation" (clean) | "technical" (raw firehose)
     streamingNode: null,
     streamingRole: null,
     knownRoles: new Set(),
+    seenIds: new Set(), // de-dupe history-replay vs live SSE
     fails: 0, // consecutive fetch failures, for graceful backoff
     lastError: "",
   };
+
+  // Build markers (carry a milestone/CI/review status, not agent chatter).
+  const MARKER_KINDS = new Set([
+    "milestone_start",
+    "ci_passed",
+    "ci_failed",
+    "review_done",
+  ]);
 
   const POLL_OK = 5000;
   const POLL_MAX = 30000;
@@ -103,16 +113,28 @@
     return state.projects.find((p) => p.id === id) || null;
   }
 
-  function selectProject(id) {
+  async function selectProject(id) {
     state.selected = id;
     state.streamingNode = null;
     state.streamingRole = null;
+    state.seenIds = new Set();
     renderProjects();
     renderDetail(id);
     document.getElementById("transcript-empty").hidden = true;
     document.getElementById("transcript-label").textContent = "(" + id.slice(0, 8) + ")";
     if (state.transcriptStream) state.transcriptStream.close();
-    document.getElementById("transcript").innerHTML = "";
+    const list = document.getElementById("transcript");
+    list.innerHTML = "";
+    // 1) Replay the persisted history so a refresh shows the whole project.
+    try {
+      const history = await fetchJson("/api/transcript/" + id);
+      if (state.selected !== id) return; // selection changed mid-load
+      for (const entry of history) renderEntry(entry);
+    } catch (err) {
+      /* non-fatal — fall through to the live stream */
+    }
+    if (state.selected !== id) return;
+    // 2) Attach the live stream for NEW entries (de-duped by id).
     state.transcriptStream = new EventSource("/sse/transcript/" + id);
     state.transcriptStream.onmessage = appendTranscript;
   }
@@ -181,6 +203,15 @@
     } catch (err) {
       return;
     }
+    renderEntry(entry);
+  }
+
+  // Shared by history replay and the live stream.
+  function renderEntry(entry) {
+    if (entry.id) {
+      if (state.seenIds.has(entry.id)) return;
+      state.seenIds.add(entry.id);
+    }
     registerRole(entry.role);
     if (entry.kind === "llm_chunk" && state.streamingNode && state.streamingRole === entry.role) {
       state.streamingNode.querySelector(".msg-body").textContent += entry.text || "";
@@ -201,13 +232,20 @@
   }
 
   function buildMessage(entry) {
-    const li = document.createElement("li");
     const kind = entry.kind || "msg";
+    if (MARKER_KINDS.has(kind)) return buildMarker(entry, kind);
+
+    const li = document.createElement("li");
     li.className = "msg kind-" + kind + (entry.role ? " has-role" : "");
     if (entry.role) li.dataset.role = entry.role;
+
     const head = document.createElement("div");
     head.className = "msg-head";
     if (entry.role) {
+      const av = document.createElement("span");
+      av.className = "avatar role-" + entry.role.replace(/\s+/g, "-");
+      av.textContent = entry.role.slice(0, 1).toUpperCase();
+      head.appendChild(av);
       const chip = document.createElement("span");
       chip.className = "role-chip role-" + entry.role.replace(/\s+/g, "-");
       chip.textContent = entry.role;
@@ -215,31 +253,115 @@
     }
     const badge = document.createElement("span");
     badge.className = "kind-badge";
-    badge.textContent = kind.replace(/_/g, " ");
+    badge.textContent = humanKind(kind);
     head.appendChild(badge);
     const ts = document.createElement("span");
     ts.className = "ts";
     ts.textContent = fmtTime(entry.at);
     head.appendChild(ts);
     li.appendChild(head);
+
     const body = document.createElement("div");
     body.className = "msg-body";
     if (kind === "tool_use" || kind === "tool_done") {
+      // Conversation mode shows a readable one-liner; technical mode shows
+      // the raw tool name + args. CSS toggles which is visible.
+      const human = document.createElement("span");
+      human.className = "tool-human";
+      human.textContent = humanizeTool(entry.text, entry.extra && entry.extra.args);
+      body.appendChild(human);
+      const raw = document.createElement("span");
+      raw.className = "tool-raw";
       const chip = document.createElement("code");
       chip.className = "tool-chip";
       chip.textContent = "🔧 " + (entry.text || "tool");
-      body.appendChild(chip);
+      raw.appendChild(chip);
       if (entry.extra && entry.extra.args) {
         const a = document.createElement("span");
         a.className = "tool-args";
         a.textContent = " " + entry.extra.args;
-        body.appendChild(a);
+        raw.appendChild(a);
       }
+      body.appendChild(raw);
     } else {
       body.textContent = entry.text || "";
     }
     li.appendChild(body);
     return li;
+  }
+
+  // Centered status pill for milestone/CI/review markers.
+  function buildMarker(entry, kind) {
+    const li = document.createElement("li");
+    li.className = "marker kind-" + kind;
+    const pill = document.createElement("span");
+    pill.className = "marker-pill";
+    pill.textContent = markerIcon(kind) + " " + (entry.text || humanKind(kind));
+    li.appendChild(pill);
+    const ts = document.createElement("span");
+    ts.className = "marker-ts";
+    ts.textContent = fmtTime(entry.at);
+    li.appendChild(ts);
+    return li;
+  }
+
+  function markerIcon(kind) {
+    if (kind === "ci_passed" || kind === "review_done") return "✓";
+    if (kind === "ci_failed") return "✗";
+    return "▶";
+  }
+
+  function humanKind(kind) {
+    const map = {
+      assistant: "says",
+      thinking: "thinking",
+      tool_use: "action",
+      tool_done: "action",
+      tool_result: "result",
+      llm_chunk: "says",
+    };
+    return map[kind] || kind.replace(/_/g, " ");
+  }
+
+  // Turn a raw SDK tool call into a human one-liner for conversation mode.
+  function humanizeTool(name, argsStr) {
+    const n = (name || "tool").trim();
+    const args = argsStr || "";
+    const file = matchFirst(args, /"(?:file_path|path|notebook_path)"\s*:\s*"([^"]+)"/);
+    const cmd = matchFirst(args, /"command"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    const pat = matchFirst(args, /"(?:pattern|query)"\s*:\s*"([^"]+)"/);
+    const base = (p) => (p ? p.split("/").pop() : "");
+    switch (n) {
+      case "Read":
+        return "📖 read " + (base(file) || "a file");
+      case "Write":
+        return "📝 wrote " + (base(file) || "a file");
+      case "Edit":
+      case "MultiEdit":
+        return "✏️ edited " + (base(file) || "a file");
+      case "Bash":
+        return "⚙️ ran: " + truncate(unescapeJson(cmd) || "a command", 80);
+      case "Glob":
+        return "🔎 found files " + (pat || "");
+      case "Grep":
+        return "🔎 searched for " + (pat || "");
+      default:
+        return "🔧 " + n;
+    }
+  }
+
+  function matchFirst(text, re) {
+    const m = re.exec(text || "");
+    return m ? m[1] : "";
+  }
+
+  function unescapeJson(s) {
+    return (s || "").replace(/\\n/g, " ").replace(/\\t/g, " ").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  }
+
+  function truncate(s, n) {
+    s = (s || "").trim();
+    return s.length > n ? s.slice(0, n) + "…" : s;
   }
 
   function registerRole(role) {
@@ -501,7 +623,23 @@
     document.getElementById("clear-transcript").addEventListener("click", () => {
       document.getElementById("transcript").innerHTML = "";
       state.streamingNode = null;
+      state.seenIds = new Set();
     });
+    document.querySelectorAll(".seg-btn").forEach((btn) => {
+      btn.addEventListener("click", () => setMode(btn.dataset.mode));
+    });
+    setMode(state.mode);
+  }
+
+  function setMode(mode) {
+    state.mode = mode;
+    document.querySelectorAll(".seg-btn").forEach((b) => {
+      b.classList.toggle("active", b.dataset.mode === mode);
+    });
+    const list = document.getElementById("transcript");
+    list.classList.toggle("mode-conversation", mode === "conversation");
+    list.classList.toggle("mode-technical", mode === "technical");
+    scrollIfPinned();
   }
 
   async function sendCommand(payload) {
