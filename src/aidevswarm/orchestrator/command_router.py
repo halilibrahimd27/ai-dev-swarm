@@ -145,16 +145,19 @@ class CommandRouter:
         return CommandResult(ok=True, intent=cmd.intent, detail=f"note #{note_id} delivered")
 
     def _pause(self, cmd: PauseProject) -> CommandResult:
-        # Pause uses the per-project kill switch as the signal; the
-        # scheduler skips tripped projects. A subsequent ResumeProject
-        # calls reset_for to lift it. The project's stored state is
-        # NOT changed (so it can resume into its current phase).
-        self.kill_switch.trip_for(cmd.project_id, reason="paused by operator")
+        # Pause is RECOVERABLE and must never make the project terminal.
+        # It sets a dedicated pause signal (NOT the kill switch — that
+        # one drives the tick straight to KILLED). The scheduler skips a
+        # paused project without touching its state, so ResumeProject
+        # continues it from exactly where it left off.
+        self.kill_switch.pause_for(cmd.project_id)
+        self.project_repo.set_status_detail(cmd.project_id, "paused by operator")
         self._log.info("router.paused", project_id=str(cmd.project_id))
         return CommandResult(ok=True, intent=cmd.intent, detail="paused")
 
     def _resume(self, cmd: ResumeProject) -> CommandResult:
-        # Lift any pause (per-project kill switch)...
+        # Lift the pause signal (and any stale per-project kill flag)...
+        self.kill_switch.unpause_for(cmd.project_id)
         self.kill_switch.reset_for(cmd.project_id)
         # ...and if the project was BLOCKED (a milestone failed its
         # retries, an escalation, or a crash), put it back to BUILDING so
@@ -166,6 +169,7 @@ class CommandRouter:
             self.project_repo.set_status_detail(cmd.project_id, "resumed by operator")
             self._log.info("router.unblocked", project_id=str(cmd.project_id))
             return CommandResult(ok=True, intent=cmd.intent, detail="resumed from blocked")
+        self.project_repo.set_status_detail(cmd.project_id, "resumed by operator")
         self._log.info("router.resumed", project_id=str(cmd.project_id))
         return CommandResult(ok=True, intent=cmd.intent, detail="resumed")
 

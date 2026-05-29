@@ -123,6 +123,13 @@ class Tick:
         if self._d.kill_switch.is_tripped_for(project.id):
             self._log.info("tick.project_killed", project=project.name)
             return self._move(project, ProjectState.KILLED)
+        # Pause is recoverable: skip this tick WITHOUT changing state, so
+        # `resume` (which clears the pause) continues the project from
+        # exactly where it left off. A paused project must never become
+        # terminal — that's what `abort`/the kill switch is for.
+        if self._d.kill_switch.is_paused_for(project.id):
+            self._log.info("tick.project_paused", project=project.name)
+            return None
         return self._advance_active(project)
 
     # ------------------------------------------------------------------

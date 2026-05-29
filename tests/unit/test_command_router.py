@@ -113,14 +113,22 @@ def test_inject_note_writes_a_row() -> None:
     assert steering.notes[0]["body"] == "focus on tests"
 
 
-def test_pause_and_resume_use_per_project_kill_switch() -> None:
+def test_pause_is_recoverable_not_a_kill() -> None:
+    """Pause must set the recoverable pause signal, NOT the kill switch.
+
+    Regression: pause used to trip the per-project kill switch, which the
+    tick turns into a terminal KILLED — so 'pause' silently killed the
+    project. Pause must be a distinct, non-terminal signal.
+    """
     project = Project(name="p", spec=_spec())
     router, _, _, kill = _make_router(project=project)
 
     router.dispatch(PauseProject(project_id=project.id))
-    assert kill.is_tripped_for(project.id)
+    assert kill.is_paused_for(project.id)
+    assert not kill.is_tripped_for(project.id)  # NOT killed
 
     router.dispatch(ResumeProject(project_id=project.id))
+    assert not kill.is_paused_for(project.id)
     assert not kill.is_tripped_for(project.id)
 
 

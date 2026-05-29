@@ -233,6 +233,28 @@ def test_kill_switch_halts_advance(tmp_path: Path) -> None:
     assert queued[0].state is ProjectState.QUEUED
 
 
+def test_paused_project_is_skipped_not_killed(tmp_path: Path) -> None:
+    """Regression: pause must skip the tick, NOT make the project terminal.
+
+    A per-project kill -> KILLED; a per-project PAUSE -> the tick returns
+    None and the project keeps its state so resume can continue it.
+    """
+    tick, state = _build_tick(tmp_path, require_approval=False)
+    project_repo: InMemoryProjectRepo = state["project_repo"]
+    project = project_repo.create(_project())
+    project = project_repo.update_state(project.id, ProjectState.PLANNING)
+
+    state["kill_switch"].pause_for(project.id)
+    assert tick.advance_project(project) is None
+    stored = project_repo.get(project.id)
+    assert stored is not None
+    assert stored.state is ProjectState.PLANNING  # unchanged — NOT killed
+
+    # Unpause -> the tick advances it again.
+    state["kill_switch"].unpause_for(project.id)
+    assert tick.advance_project(project) is not None
+
+
 def test_milestone_failure_blocks_after_retry_limit(tmp_path: Path) -> None:
     tick, state = _build_tick(tmp_path, require_approval=False)
     state["build"].succeed = False  # every build fails

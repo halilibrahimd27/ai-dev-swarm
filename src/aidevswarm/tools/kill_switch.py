@@ -28,6 +28,10 @@ def _project_key(project_id: UUID) -> str:
     return f"aidevswarm:kill:{project_id}"
 
 
+def _pause_key(project_id: UUID) -> str:
+    return f"aidevswarm:pause:{project_id}"
+
+
 class _RedisClient(Protocol):
     """Trimmed down view of the redis-py client surface we use."""
 
@@ -78,6 +82,17 @@ class RedisKillSwitch:
     def reset_for(self, project_id: UUID) -> None:
         self._client.delete(_project_key(project_id), _project_key(project_id) + ":reason")
 
+    # ------------- per-project pause (recoverable, NOT terminal) -------------
+
+    def is_paused_for(self, project_id: UUID) -> bool:
+        return self._client.get(_pause_key(project_id)) == b"1"
+
+    def pause_for(self, project_id: UUID) -> None:
+        self._client.set(_pause_key(project_id), "1")
+
+    def unpause_for(self, project_id: UUID) -> None:
+        self._client.delete(_pause_key(project_id))
+
 
 class InMemoryKillSwitch:
     """Process-local fallback used in tests and on first boot.
@@ -90,6 +105,7 @@ class InMemoryKillSwitch:
         self._tripped = False
         self._reason = ""
         self._per_project: dict[UUID, str] = {}
+        self._paused: set[UUID] = set()
 
     def is_tripped(self) -> bool:
         return self._tripped
@@ -110,3 +126,12 @@ class InMemoryKillSwitch:
 
     def reset_for(self, project_id: UUID) -> None:
         self._per_project.pop(project_id, None)
+
+    def is_paused_for(self, project_id: UUID) -> bool:
+        return project_id in self._paused
+
+    def pause_for(self, project_id: UUID) -> None:
+        self._paused.add(project_id)
+
+    def unpause_for(self, project_id: UUID) -> None:
+        self._paused.discard(project_id)

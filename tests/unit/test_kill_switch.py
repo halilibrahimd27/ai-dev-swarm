@@ -7,6 +7,8 @@ slice of the protocol.
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from aidevswarm.tools.kill_switch import (
     KEY_FLAG,
     KEY_REASON,
@@ -45,6 +47,17 @@ def test_in_memory_kill_switch_round_trip() -> None:
     assert ks.is_tripped() is True
     ks.reset()
     assert ks.is_tripped() is False
+
+
+def test_pause_is_independent_of_kill() -> None:
+    """Pause and kill are separate signals — pausing must not 'kill'."""
+    for ks in (InMemoryKillSwitch(), RedisKillSwitch(_FakeRedis())):
+        pid = uuid4()
+        ks.pause_for(pid)
+        assert ks.is_paused_for(pid) is True
+        assert ks.is_tripped_for(pid) is False  # pause != kill
+        ks.unpause_for(pid)
+        assert ks.is_paused_for(pid) is False
 
 
 def test_redis_kill_switch_writes_flag_and_reason() -> None:
