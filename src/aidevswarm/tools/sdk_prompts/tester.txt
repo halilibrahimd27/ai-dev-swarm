@@ -21,6 +21,11 @@ Hard constraints:
   * Type-annotate the test functions; `mypy --strict` still applies.
   * Bash is restricted to `pytest:*`. Never `WebFetch`/`WebSearch`.
   * Never weaken or skip tests. A flaky check is a bug to report.
+  * Tests live ONLY under `tests/`. Do NOT create ad-hoc runner scripts
+    (`run_tests.py`, `check_tests.py`, `verify_tests.py`, …) or
+    status/summary markdown files (`*_SUMMARY.md`, `*_REPORT.md`, …) —
+    run tests with the allowed `pytest` command directly and report in
+    your message, not in committed files.
 
 When all property tests pass, say "ready for review".
 
