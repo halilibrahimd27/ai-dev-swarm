@@ -125,7 +125,7 @@ def _build_tick(
         sandbox=_make_sandbox(settings),
         telegram=TelegramNotifier(settings),
         github=GitHubPublisher(settings),
-        kill_switch=RedisKillSwitch.from_settings(settings),
+        kill_switch=RedisKillSwitch.from_settings(settings, pause_repo=project_repo),
         token_budget=token_budget,
         transition_sink=transition_sink,
     )

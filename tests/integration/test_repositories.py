@@ -296,6 +296,25 @@ def test_token_log_cost_and_project_aggregates(live_pool: ConnectionPool, projec
 # ------------------------- status_detail -------------------------
 
 
+def test_project_pause_round_trips_and_survives_a_new_repo_instance(
+    live_pool: ConnectionPool, project: Project
+) -> None:
+    """Pause is durable — a fresh repo (simulating a process restart) still
+    sees the project as paused. This is the bug the move-to-Postgres fixed:
+    Redis lost the pause key on every container reset."""
+    repo = PsycopgProjectRepo(live_pool)
+    assert repo.is_paused(project.id) is False
+    repo.set_paused(project.id, True)
+    assert repo.is_paused(project.id) is True
+    # A new repo instance reading the same DB still sees the pause.
+    fresh = PsycopgProjectRepo(live_pool)
+    assert fresh.is_paused(project.id) is True
+    refetched = fresh.get(project.id)
+    assert refetched is not None and refetched.is_paused is True
+    repo.set_paused(project.id, False)
+    assert repo.is_paused(project.id) is False
+
+
 def test_set_status_detail_round_trips(live_pool: ConnectionPool, project: Project) -> None:
     prepo = PsycopgProjectRepo(live_pool)
     prepo.set_status_detail(project.id, "blocked: milestone X failed 3x")

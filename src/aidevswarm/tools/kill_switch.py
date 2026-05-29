@@ -1,11 +1,20 @@
-"""Global + per-project kill switch (Phase 4 expanded).
+"""Global + per-project kill switch + per-project pause.
 
 The global switch halts the entire orchestrator. Per-project switches
 let the operator stop one project's progression without disturbing
 others — set by the Phase 5 Telegram ``/kill <project_id>`` command;
 the API ships here so the rest of Phase 4 can rely on it.
 
-Key layout:
+**Kill** is transient: a runtime emergency signal that should be fast
+to set and read. It lives in Redis.
+
+**Pause** is recoverable and must SURVIVE A RESTART: it used to live in
+Redis too, but a container reset wiped the key and the project would
+have resumed had the daily-budget guard not also been exhausted. Pause
+is now stored on the ``projects`` row (``is_paused``) — durable across
+restarts and visible in the same place the rest of project state lives.
+
+Key layout (Redis):
   * Global       : ``aidevswarm:kill_switch``      (``1`` = tripped)
   * Global reason: ``aidevswarm:kill_switch:reason``
   * Per-project  : ``aidevswarm:kill:<project_id>`` (``1`` = tripped)
@@ -28,10 +37,6 @@ def _project_key(project_id: UUID) -> str:
     return f"aidevswarm:kill:{project_id}"
 
 
-def _pause_key(project_id: UUID) -> str:
-    return f"aidevswarm:pause:{project_id}"
-
-
 class _RedisClient(Protocol):
     """Trimmed down view of the redis-py client surface we use."""
 
@@ -40,21 +45,38 @@ class _RedisClient(Protocol):
     def delete(self, *names: str) -> int: ...
 
 
-class RedisKillSwitch:
-    """Concrete :class:`aidevswarm.tools.protocols.KillSwitch`."""
+class PauseRepo(Protocol):
+    """The narrow project-pause slice the kill switch needs.
 
-    def __init__(self, client: _RedisClient) -> None:
+    A subset of :class:`aidevswarm.db.protocols.ProjectRepo` — kept narrow
+    so the kill switch doesn't import the full repo interface (and so a
+    test fake can satisfy it with two methods).
+    """
+
+    def set_paused(self, project_id: UUID, paused: bool) -> None: ...
+    def is_paused(self, project_id: UUID) -> bool: ...
+
+
+class RedisKillSwitch:
+    """Concrete :class:`aidevswarm.tools.protocols.KillSwitch`.
+
+    Kill (global + per-project) lives in Redis; pause is delegated to the
+    injected :class:`PauseRepo` so it persists across restarts.
+    """
+
+    def __init__(self, client: _RedisClient, pause_repo: PauseRepo) -> None:
         self._client = client
+        self._pause = pause_repo
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> RedisKillSwitch:
+    def from_settings(cls, settings: Settings, pause_repo: PauseRepo) -> RedisKillSwitch:
         """Build one from the env-driven :class:`Settings` object."""
         client = redis.Redis(
             host=settings.redis_host,
             port=settings.redis_port,
             decode_responses=False,
         )
-        return cls(client)
+        return cls(client, pause_repo)
 
     # ------------- global -------------
 
@@ -69,7 +91,7 @@ class RedisKillSwitch:
     def reset(self) -> None:
         self._client.delete(KEY_FLAG, KEY_REASON)
 
-    # ------------- per-project (Phase 4) -------------
+    # ------------- per-project kill (Phase 4) -------------
 
     def is_tripped_for(self, project_id: UUID) -> bool:
         return self._client.get(_project_key(project_id)) == b"1"
@@ -82,16 +104,16 @@ class RedisKillSwitch:
     def reset_for(self, project_id: UUID) -> None:
         self._client.delete(_project_key(project_id), _project_key(project_id) + ":reason")
 
-    # ------------- per-project pause (recoverable, NOT terminal) -------------
+    # ------------- per-project pause (durable via Postgres) -------------
 
     def is_paused_for(self, project_id: UUID) -> bool:
-        return self._client.get(_pause_key(project_id)) == b"1"
+        return self._pause.is_paused(project_id)
 
     def pause_for(self, project_id: UUID) -> None:
-        self._client.set(_pause_key(project_id), "1")
+        self._pause.set_paused(project_id, True)
 
     def unpause_for(self, project_id: UUID) -> None:
-        self._client.delete(_pause_key(project_id))
+        self._pause.set_paused(project_id, False)
 
 
 class InMemoryKillSwitch:

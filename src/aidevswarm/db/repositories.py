@@ -36,6 +36,7 @@ def _project_from_row(row: dict[str, Any]) -> Project:
         state=ProjectState(row["state"]),
         github_repo=row["github_repo"],
         status_detail=row.get("status_detail"),
+        is_paused=bool(row.get("is_paused", False)),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -144,6 +145,19 @@ class PsycopgProjectRepo:
                 "UPDATE projects SET status_detail = %s, updated_at = %s WHERE id = %s",
                 (detail, utc_now(), str(project_id)),
             )
+
+    def set_paused(self, project_id: UUID, paused: bool) -> None:
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE projects SET is_paused = %s, updated_at = %s WHERE id = %s",
+                (paused, utc_now(), str(project_id)),
+            )
+
+    def is_paused(self, project_id: UUID) -> bool:
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT is_paused FROM projects WHERE id = %s", (str(project_id),))
+            row = cur.fetchone()
+            return bool(row[0]) if row is not None else False
 
 
 class PsycopgMilestoneRepo:

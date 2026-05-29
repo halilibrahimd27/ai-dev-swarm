@@ -71,6 +71,12 @@ class Project(BaseModel):
     # Human-readable "why is it in this state" — e.g. the block reason.
     # Surfaced in the web UI so a blocked/paused project explains itself.
     status_detail: str | None = None
+    # Operator pause flag. Set via PauseProject / cleared via ResumeProject.
+    # Recoverable (NOT terminal): the tick SKIPS a paused project without
+    # changing its state, so resume continues from exactly where it left off.
+    # Stored on the row (durable) — used to live in Redis, which lost it on
+    # every container reset.
+    is_paused: bool = False
     created_at: datetime = Field(default_factory=_utc_now)
     updated_at: datetime = Field(default_factory=_utc_now)
 

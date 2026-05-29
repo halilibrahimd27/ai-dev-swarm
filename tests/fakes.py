@@ -80,6 +80,14 @@ class InMemoryProjectRepo:
         existing = self.rows[project_id]
         self.rows[project_id] = existing.model_copy(update={"status_detail": detail})
 
+    def set_paused(self, project_id: UUID, paused: bool) -> None:
+        existing = self.rows[project_id]
+        self.rows[project_id] = existing.model_copy(update={"is_paused": paused})
+
+    def is_paused(self, project_id: UUID) -> bool:
+        existing = self.rows.get(project_id)
+        return bool(existing.is_paused) if existing is not None else False
+
 
 @dataclass
 class InMemoryMilestoneRepo:
