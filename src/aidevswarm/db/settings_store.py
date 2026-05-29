@@ -164,6 +164,10 @@ def get_spec(key: str) -> EditableSetting | None:
     return _BY_KEY.get(key)
 
 
+_BOOL_TRUE = frozenset({"true", "1", "yes", "on"})
+_BOOL_FALSE = frozenset({"false", "0", "no", "off"})
+
+
 def coerce(spec: EditableSetting, raw: str) -> int | float | bool | str:
     """Parse + range-check a raw string into the setting's typed value.
 
@@ -172,26 +176,34 @@ def coerce(spec: EditableSetting, raw: str) -> int | float | bool | str:
     """
     text = raw.strip()
     if spec.kind == "bool":
-        low = text.lower()
-        if low in ("true", "1", "yes", "on"):
-            return True
-        if low in ("false", "0", "no", "off"):
-            return False
-        raise ValueError(f"{spec.key}: expected a boolean, got {raw!r}")
+        return _coerce_bool(spec, text, raw)
     if spec.kind == "enum":
-        if text not in spec.choices:
-            raise ValueError(f"{spec.key}: must be one of {list(spec.choices)}, got {raw!r}")
-        return text
-    if spec.kind == "int":
-        try:
-            value: int | float = int(text)
-        except ValueError as exc:
-            raise ValueError(f"{spec.key}: expected an integer, got {raw!r}") from exc
-    else:  # float
-        try:
-            value = float(text)
-        except ValueError as exc:
-            raise ValueError(f"{spec.key}: expected a number, got {raw!r}") from exc
+        return _coerce_enum(spec, text, raw)
+    return _coerce_numeric(spec, text, raw)
+
+
+def _coerce_bool(spec: EditableSetting, text: str, raw: str) -> bool:
+    low = text.lower()
+    if low in _BOOL_TRUE:
+        return True
+    if low in _BOOL_FALSE:
+        return False
+    raise ValueError(f"{spec.key}: expected a boolean, got {raw!r}")
+
+
+def _coerce_enum(spec: EditableSetting, text: str, raw: str) -> str:
+    if text not in spec.choices:
+        raise ValueError(f"{spec.key}: must be one of {list(spec.choices)}, got {raw!r}")
+    return text
+
+
+def _coerce_numeric(spec: EditableSetting, text: str, raw: str) -> int | float:
+    is_int = spec.kind == "int"
+    try:
+        value: int | float = int(text) if is_int else float(text)
+    except ValueError as exc:
+        what = "an integer" if is_int else "a number"
+        raise ValueError(f"{spec.key}: expected {what}, got {raw!r}") from exc
     if spec.minimum is not None and value < spec.minimum:
         raise ValueError(f"{spec.key}: must be >= {spec.minimum}")
     if spec.maximum is not None and value > spec.maximum:
