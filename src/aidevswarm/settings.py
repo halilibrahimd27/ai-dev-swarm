@@ -178,13 +178,18 @@ class Settings(BaseSettings):
         validation_alias="AIDEVSWARM_WORKSPACES_DIR",
     )
 
-    # CI sandbox for generated code. "docker" runs the milestone's tests
-    # in an ephemeral, network-less container (the safe production
-    # default — requires the host Docker socket + the sandbox image).
-    # "inmemory" skips the container and treats CI as pass — use it only
-    # when Docker-in-Docker isn't available; it does NOT run the
-    # generated tests, so quality rests on the Reviewer alone.
-    sandbox_mode: Literal["docker", "inmemory"] = Field(
+    # CI sandbox for generated code.
+    #  - "docker"     runs the milestone's tests in an ephemeral,
+    #    network-less container (most isolated — needs the host Docker
+    #    socket + the sandbox image).
+    #  - "subprocess" installs the generated project into a throwaway uv
+    #    venv and runs ruff + mypy --strict + pytest in-process. Real
+    #    tests, no Docker socket needed; less isolated than "docker" but
+    #    the production default for the compose stack (the orchestrator
+    #    container has no socket).
+    #  - "inmemory"   treats CI as pass WITHOUT running anything — last
+    #    resort; quality then rests on the Reviewer alone.
+    sandbox_mode: Literal["docker", "subprocess", "inmemory"] = Field(
         default="docker", validation_alias="AIDEVSWARM_SANDBOX_MODE"
     )
 

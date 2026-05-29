@@ -62,6 +62,9 @@ RUN apt-get update \
 WORKDIR /workspace
 
 COPY --from=builder /opt/venv /opt/venv
+# uv drives the "subprocess" CI sandbox: it builds a throwaway venv per
+# milestone and installs the generated project to actually run its tests.
+COPY --from=builder /usr/local/bin/uv /usr/local/bin/uv
 COPY --from=builder /app/src /workspace/src
 # Phase 6 auto-migrate path: the bootstrap.run_migrations() helper
 # walks up from src/aidevswarm/ looking for alembic.ini, then loads

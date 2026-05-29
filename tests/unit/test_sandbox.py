@@ -12,7 +12,13 @@ from unittest import mock
 
 import pytest
 
-from aidevswarm.tools.sandbox import DockerSandbox, InMemorySandbox, SandboxRun
+from aidevswarm.tools.sandbox import (
+    DockerSandbox,
+    InMemorySandbox,
+    SandboxRun,
+    SubprocessSandbox,
+    _source_dirs,
+)
 
 
 def test_in_memory_sandbox_default_passes(tmp_path: Path) -> None:
@@ -71,3 +77,51 @@ def test_docker_sandbox_rejects_missing_workspace(tmp_path: Path) -> None:
 def test_sandbox_run_is_a_dataclass() -> None:
     r = SandboxRun(passed=True, stdout="ok", stderr="", exit_code=0)
     assert r.passed and r.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# SubprocessSandbox — mypy source-dir detection (the layout-sensitive bit)
+# ---------------------------------------------------------------------------
+
+
+def test_source_dirs_prefers_src_layout(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    assert _source_dirs(tmp_path) == ["src"]
+
+
+def test_source_dirs_picks_top_level_packages_excluding_tests(tmp_path: Path) -> None:
+    """Reproduces a generated project's `mypy --strict apps packages`."""
+    for pkg in ("apps", "packages"):
+        d = tmp_path / pkg
+        d.mkdir()
+        (d / "mod.py").write_text("x = 1\n")
+    for noise in ("tests", "alembic", "vendor"):
+        d = tmp_path / noise
+        d.mkdir()
+        (d / "thing.py").write_text("x = 1\n")
+    (tmp_path / ".hidden").mkdir()
+    assert _source_dirs(tmp_path) == ["apps", "packages"]
+
+
+def test_source_dirs_falls_back_to_dot(tmp_path: Path) -> None:
+    (tmp_path / "tests").mkdir()
+    assert _source_dirs(tmp_path) == ["."]
+
+
+def test_subprocess_sandbox_rejects_missing_workspace(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        SubprocessSandbox().run_ci(str(tmp_path / "nope"))
+
+
+def test_subprocess_sandbox_reports_venv_failure(tmp_path: Path) -> None:
+    """A failed venv step yields a non-passing run (no real uv needed)."""
+    sandbox = SubprocessSandbox(uv_binary="/nonexistent/uv-binary")
+    fake_proc = mock.Mock()
+    fake_proc.returncode = 127
+    fake_proc.stdout = ""
+    fake_proc.stderr = "uv: not found"
+    with mock.patch.object(subprocess, "run", return_value=fake_proc):
+        res = sandbox.run_ci(str(tmp_path))
+    assert res.passed is False
+    assert res.exit_code == 127

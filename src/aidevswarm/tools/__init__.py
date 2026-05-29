@@ -20,7 +20,12 @@ from aidevswarm.tools.protocols import (
     Telegram,
     TokenBudget,
 )
-from aidevswarm.tools.sandbox import DockerSandbox, InMemorySandbox, SandboxRun
+from aidevswarm.tools.sandbox import (
+    DockerSandbox,
+    InMemorySandbox,
+    SandboxRun,
+    SubprocessSandbox,
+)
 from aidevswarm.tools.telegram import NullTelegram, TelegramNotifier
 from aidevswarm.tools.workspace import (
     CommitResult,
@@ -50,6 +55,7 @@ __all__ = [
     "Sandbox",
     "SandboxResult",
     "SandboxRun",
+    "SubprocessSandbox",
     "SpendRecorder",
     "Telegram",
     "TelegramNotifier",

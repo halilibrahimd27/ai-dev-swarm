@@ -50,7 +50,9 @@ from aidevswarm.tools import (
     InMemorySandbox,
     PgvectorMemory,
     RedisKillSwitch,
+    Sandbox,
     SpendRecorder,
+    SubprocessSandbox,
     TelegramNotifier,
     WorkspaceManager,
 )
@@ -59,6 +61,15 @@ from aidevswarm.tools.mcp_config import load_mcp_servers
 # The UI directory ships at the repo root; in the docker image it lands
 # at /workspace/ui via the Dockerfile.
 _UI_DIR = Path(__file__).resolve().parents[3] / "ui"
+
+
+def _make_sandbox(settings: Settings) -> Sandbox:
+    """Pick the CI sandbox implementation from ``sandbox_mode``."""
+    if settings.sandbox_mode == "inmemory":
+        return InMemorySandbox()
+    if settings.sandbox_mode == "subprocess":
+        return SubprocessSandbox()
+    return DockerSandbox()
 
 
 def _build_tick(
@@ -109,7 +120,7 @@ def _build_tick(
             author_name=settings.workspace_author_name,
             author_email=settings.workspace_author_email,
         ),
-        sandbox=(InMemorySandbox() if settings.sandbox_mode == "inmemory" else DockerSandbox()),
+        sandbox=_make_sandbox(settings),
         telegram=TelegramNotifier(settings),
         github=GitHubPublisher(settings),
         kill_switch=RedisKillSwitch.from_settings(settings),
