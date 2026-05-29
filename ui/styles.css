@@ -444,3 +444,68 @@ h2, h3, h4 { font-family: var(--font-sans); }
   .stat-row { grid-template-columns: repeat(2, 1fr); }
   .np-row { grid-template-columns: 1fr; }
 }
+
+/* ============================================================ corporate v2 */
+/* A calmer, more "company dashboard" treatment: grouped nav, an indigo
+   accent, and the Boardroom as a first-class meeting view. */
+
+.nav-section {
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  opacity: 0.6;
+  padding: 0.55rem 0.6rem 0.2rem;
+}
+.nav-section:first-child { padding-top: 0.2rem; }
+
+/* Boardroom — the meeting room. Decisions render as speaker cards. */
+.boardroom-project {
+  font-size: 0.8rem;
+  color: var(--accent);
+  font-weight: 600;
+}
+.boardroom-stream {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 0;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.decision {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  padding: 0.6rem 0.8rem;
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  box-shadow: var(--shadow);
+}
+.decision-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.decision-role { font-weight: 700; font-size: 0.8rem; color: var(--fg); }
+.decision-ts { margin-left: auto; font-size: 0.62rem; color: var(--muted); }
+.decision-body { font-size: 0.86rem; line-height: 1.5; color: var(--fg); white-space: pre-wrap; word-break: break-word; }
+
+/* Per-speaker accent on the left rail + role name. */
+.decision.role-PM { border-left-color: var(--purple); }
+.decision.role-PM .decision-role { color: var(--purple); }
+.decision.role-Architect { border-left-color: #79c0ff; }
+.decision.role-Architect .decision-role { color: #79c0ff; }
+.decision.role-Reviewer { border-left-color: var(--ok); }
+.decision.role-Reviewer .decision-role { color: var(--ok); }
+.decision.role-Operator { border-left-color: var(--accent); }
+.decision.role-Operator .decision-role { color: var(--accent); }
+/* The Finance officer is visually distinct — money talks. */
+.decision.is-finance {
+  border-left-color: var(--warn);
+  background: linear-gradient(180deg, rgba(224, 169, 58, 0.08), var(--panel));
+}
+.decision.is-finance .decision-role { color: var(--warn); }

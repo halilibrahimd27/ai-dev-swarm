@@ -8,7 +8,15 @@
 (function () {
   "use strict";
 
-  const ROUTES = ["dashboard", "transcript", "evaluations", "spend", "settings", "activity"];
+  const ROUTES = [
+    "dashboard",
+    "boardroom",
+    "transcript",
+    "evaluations",
+    "spend",
+    "settings",
+    "activity",
+  ];
 
   // The server injects the API token into a <meta name="api-token"> tag when
   // AIDEVSWARM_API_TOKEN is set; mutating requests must carry it. Empty when
@@ -36,12 +44,28 @@
   const POLL_MAX = 30000;
 
   // Build markers carry a milestone/CI/review status, not agent chatter.
-  const MARKER_KINDS = new Set(["milestone_start", "ci_passed", "ci_failed", "review_done"]);
+  const MARKER_KINDS = new Set([
+    "milestone_start",
+    "ci_passed",
+    "ci_failed",
+    "ci_repaired",
+    "review_done",
+  ]);
+
+  // Roles whose decisions carry an icon in the boardroom view.
+  const BOARDROOM_ICONS = {
+    PM: "🧭",
+    Architect: "📐",
+    Reviewer: "✓",
+    Finance: "💵",
+    Operator: "🧑‍💼",
+  };
 
   document.addEventListener("DOMContentLoaded", () => {
     bindNav();
     bindControls();
     bindSteerForm();
+    bindBoardroomForm();
     bindToolbar();
     bindNewProjectForm();
     window.addEventListener("hashchange", () => route(currentHashRoute()));
@@ -77,6 +101,18 @@
     if (name === "evaluations") loadIdeas();
     if (name === "settings" && !state.settingsLoaded) loadSettings();
     if (name === "transcript") scrollIfPinned();
+    if (name === "boardroom") updateBoardroomChrome();
+  }
+
+  function updateBoardroomChrome() {
+    const p = state.selected ? projectById(state.selected) : null;
+    const label = document.getElementById("boardroom-project");
+    const empty = document.getElementById("boardroom-empty");
+    const form = document.getElementById("boardroom-form");
+    if (label) label.textContent = p ? p.name : "";
+    const has = Boolean(p);
+    if (empty) empty.hidden = has;
+    if (form) form.hidden = !has;
   }
 
   function go(name) {
@@ -203,7 +239,10 @@
     if (state.transcriptStream) state.transcriptStream.close();
     const list = document.getElementById("transcript");
     list.innerHTML = "";
+    document.getElementById("boardroom-stream").innerHTML = "";
+    updateBoardroomChrome();
     // 1) Replay persisted history so a refresh shows the whole project.
+    //    Decision entries are also routed into the boardroom by renderEntry.
     try {
       const history = await fetchJson("/api/transcript/" + id);
       if (state.selected !== id) return;
@@ -293,6 +332,11 @@
       state.seenIds.add(entry.id);
     }
     registerRole(entry.role);
+    // Boardroom: high-level decisions get their own curated stream (they
+    // ALSO appear in the raw transcript below).
+    if (entry.kind === "decision") {
+      renderBoardroomEntry(entry);
+    }
     if (entry.kind === "llm_chunk" && state.streamingNode && state.streamingRole === entry.role) {
       state.streamingNode.querySelector(".msg-body").textContent += entry.text || "";
       scrollIfPinned();
@@ -309,6 +353,37 @@
       state.streamingRole = null;
     }
     scrollIfPinned();
+  }
+
+  // ------------------------------------------------------------------
+  // Boardroom — curated decision cards (a subset of the transcript)
+  // ------------------------------------------------------------------
+
+  function renderBoardroomEntry(entry) {
+    const stream = document.getElementById("boardroom-stream");
+    if (!stream) return;
+    const role = entry.role || "Team";
+    const li = document.createElement("li");
+    li.className = "decision role-" + role + (role === "Finance" ? " is-finance" : "");
+    const head = document.createElement("div");
+    head.className = "decision-head";
+    const who = document.createElement("span");
+    who.className = "decision-role";
+    who.textContent = (BOARDROOM_ICONS[role] || "•") + " " + role;
+    const ts = document.createElement("span");
+    ts.className = "decision-ts";
+    ts.textContent = fmtTime(entry.at);
+    head.appendChild(who);
+    head.appendChild(ts);
+    const body = document.createElement("div");
+    body.className = "decision-body";
+    body.textContent = entry.text || "";
+    li.appendChild(head);
+    li.appendChild(body);
+    stream.appendChild(li);
+    if (state.route === "boardroom" && state.autoscroll) {
+      stream.scrollTop = stream.scrollHeight;
+    }
   }
 
   function buildMessage(entry) {
@@ -757,6 +832,21 @@
       const body = input.value.trim();
       if (!body) return;
       if (!state.selected) return reqProject();
+      await sendCommand({ intent: "inject_note", project_id: state.selected, body });
+      input.value = "";
+    });
+  }
+
+  function bindBoardroomForm() {
+    const form = document.getElementById("boardroom-form");
+    if (!form) return;
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const input = document.getElementById("boardroom-input");
+      const body = input.value.trim();
+      if (!body) return;
+      if (!state.selected) return reqProject();
+      // Same channel as steering — also surfaces as an Operator decision.
       await sendCommand({ intent: "inject_note", project_id: state.selected, body });
       input.value = "";
     });

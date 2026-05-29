@@ -20,9 +20,13 @@
 
   <div class="app">
     <nav class="sidenav" aria-label="Primary">
+      <span class="nav-section">Overview</span>
       <button class="navitem active" data-route="dashboard"><span class="nav-ic">▦</span> Dashboard</button>
+      <button class="navitem" data-route="boardroom"><span class="nav-ic">⬡</span> Boardroom</button>
+      <span class="nav-section">Project</span>
       <button class="navitem" data-route="transcript"><span class="nav-ic">▤</span> Transcript</button>
       <button class="navitem" data-route="evaluations"><span class="nav-ic">★</span> Evaluations</button>
+      <span class="nav-section">Operations</span>
       <button class="navitem" data-route="spend"><span class="nav-ic">$</span> Spend</button>
       <button class="navitem" data-route="settings"><span class="nav-ic">⚙</span> Settings</button>
       <button class="navitem" data-route="activity"><span class="nav-ic">≣</span> Activity</button>
@@ -66,6 +70,21 @@
 
         <p class="view-hint">Pick a project to watch its agents work. “ideate now” fires the ideation crew until an idea clears the gate; “new project” lets you hand-author one.</p>
         <ul id="project-list" class="project-list"></ul>
+      </section>
+
+      <!-- ───────────────────────────────────────── Boardroom -->
+      <section class="view" id="view-boardroom" hidden>
+        <div class="view-head">
+          <h2>Boardroom</h2>
+          <div id="boardroom-project" class="boardroom-project"></div>
+        </div>
+        <p class="view-hint">The company meeting: the swarm's senior staff — PM, Architect, Reviewer and the Finance officer — talk through the key calls on this project. High-signal decisions only, not the line-by-line work (that's the Transcript). Drop in to steer them.</p>
+        <ol id="boardroom-stream" class="boardroom-stream" aria-live="polite"></ol>
+        <p id="boardroom-empty" class="empty-hint">Select a project from the Dashboard to sit in on its boardroom.</p>
+        <form id="boardroom-form" class="steer">
+          <input id="boardroom-input" type="text" placeholder="speak in the boardroom — steer the team…" autocomplete="off" />
+          <button type="submit">speak</button>
+        </form>
       </section>
 
       <!-- ───────────────────────────────────────── Transcript -->
