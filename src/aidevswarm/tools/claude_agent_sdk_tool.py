@@ -113,16 +113,23 @@ class ClaudeAgentSDKTool:
             self._arun(
                 milestone,
                 workspace,
-                max_turns=max_turns or self.default_max_turns,
-                max_budget_usd=max_budget_usd or self.default_max_budget_usd,
+                max_turns=max_turns or self._settings.sdk_max_turns,
+                max_budget_usd=max_budget_usd or self._settings.sdk_max_budget_usd,
             )
         )
 
     def _model(self) -> str:
-        """Resolve this role's model from its tier (see :attr:`model_tier`)."""
-        return (
+        """Resolve this role's model from its tier (see :attr:`model_tier`).
+
+        The Claude Code CLI (which the SDK drives) wants a BARE model id
+        like ``claude-opus-4-7``; the ``anthropic/`` prefix is only for
+        LiteLLM (the CrewAI path) and the CLI rejects it ("model may not
+        exist"). Strip any ``provider/`` prefix here.
+        """
+        raw = (
             self._settings.model_fast if self.model_tier == "fast" else self._settings.model_strong
         )
+        return raw.split("/", 1)[-1]
 
     # ------------------------------------------------------------------
     # Internals — also useful directly from async tests
@@ -282,10 +289,14 @@ class ClaudeAgentSDKTool:
         if self._recorder is None:
             return
         usage = final.usage or {}
-        prompt_tokens = (
-            int(usage.get("input_tokens", 0) or 0)
-            + int(usage.get("cache_read_input_tokens", 0) or 0)
-            + int(usage.get("cache_creation_input_tokens", 0) or 0)
+        # Count only NEW input + cache writes, NOT cache reads. Over a
+        # 40-turn session the same context is re-read every turn, so
+        # cache_read balloons into the millions — counting it would trip
+        # the per-milestone token cap before auto-split could even bisect
+        # the milestone. Cache reads are also ~0.1x cost; the exact
+        # dollar figure still comes from total_cost_usd below.
+        prompt_tokens = int(usage.get("input_tokens", 0) or 0) + int(
+            usage.get("cache_creation_input_tokens", 0) or 0
         )
         self._recorder.record(
             project_id=milestone.project_id,

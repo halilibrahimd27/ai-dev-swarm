@@ -213,7 +213,10 @@ realistically tune:
 | `AIDEVSWARM_DAILY_TOKEN_BUDGET` | `2_000_000` | Soft cap on tokens spent per UTC day across ALL projects. |
 | `AIDEVSWARM_PER_MILESTONE_TOKEN_BUDGET` | `400_000` | Hard cap per milestone — circuit breaker, not a deadline. |
 | `AIDEVSWARM_BUILD_CONCURRENCY` | `1` | How many projects build in parallel. Cost scales linearly. |
-| `AIDEVSWARM_REQUIRE_APPROVAL` | `true` | Set to `false` to skip the plan-approval checkpoint. |
+| `AIDEVSWARM_REQUIRE_APPROVAL` | `true` | An accepted idea is planned, then **parks at `awaiting_approval` until you approve it** (web UI or Telegram) before any coding/pushing. Set `false` for **fully-autonomous** operation — the swarm codes + pushes with no human gate. Keep `true` unless you fully trust the swarm and your budget. |
+| `AIDEVSWARM_IDEATION_MIN_SCORE` | `80` | An idea must score ≥ this (and be novel) to become a project. |
+| `AIDEVSWARM_IDEATION_MAX_ROUNDS` | `5` | If a round produces nothing past the gate, re-ideate up to this many times. |
+| `AIDEVSWARM_SANDBOX_MODE` | `docker` | `docker` runs each milestone's tests in an ephemeral, network-less container (needs the host Docker socket + the sandbox image). `inmemory` skips it (CI = pass; quality rests on the Reviewer) — used by the bundled compose stack since the orchestrator container has no Docker socket. |
 | `AIDEVSWARM_GITHUB_MODE` | `pr_only` | `pr_only` opens PRs; `auto_merge` lands them. Stay in `pr_only` until you trust the swarm. |
 | `AIDEVSWARM_AUTO_SPLIT_MAX_TURNS` | `40` | Auto-split fires when predicted SDK turns exceed this. |
 | `AIDEVSWARM_AUTO_SPLIT_MAX_COST_USD` | `3.0` | Auto-split fires when predicted milestone cost exceeds this. |

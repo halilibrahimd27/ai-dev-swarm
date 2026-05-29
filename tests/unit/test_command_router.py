@@ -124,6 +124,17 @@ def test_pause_and_resume_use_per_project_kill_switch() -> None:
     assert not kill.is_tripped_for(project.id)
 
 
+def test_resume_unblocks_a_blocked_project_to_building() -> None:
+    """A blocked project resumes from where it left off (-> BUILDING)."""
+    project = Project(name="p", spec=_spec(), state=ProjectState.BLOCKED)
+    router, project_repo, _, _ = _make_router(project=project)
+    result = router.dispatch(ResumeProject(project_id=project.id))
+    assert result.ok
+    snapshot = project_repo.get(project.id)
+    assert snapshot is not None
+    assert snapshot.state is ProjectState.BUILDING
+
+
 def test_list_state_and_show_transcript_are_acknowledgements() -> None:
     router, _, _, _ = _make_router()
     list_result = router.dispatch(ListState())

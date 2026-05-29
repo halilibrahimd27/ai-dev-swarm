@@ -154,7 +154,18 @@ class CommandRouter:
         return CommandResult(ok=True, intent=cmd.intent, detail="paused")
 
     def _resume(self, cmd: ResumeProject) -> CommandResult:
+        # Lift any pause (per-project kill switch)...
         self.kill_switch.reset_for(cmd.project_id)
+        # ...and if the project was BLOCKED (a milestone failed its
+        # retries, an escalation, or a crash), put it back to BUILDING so
+        # it CONTINUES from where it left off — its done milestones +
+        # git workspace persist, so it picks up the next pending one.
+        project = self.project_repo.get(cmd.project_id)
+        if project is not None and project.state is ProjectState.BLOCKED:
+            self.project_repo.update_state(cmd.project_id, ProjectState.BUILDING)
+            self.project_repo.set_status_detail(cmd.project_id, "resumed by operator")
+            self._log.info("router.unblocked", project_id=str(cmd.project_id))
+            return CommandResult(ok=True, intent=cmd.intent, detail="resumed from blocked")
         self._log.info("router.resumed", project_id=str(cmd.project_id))
         return CommandResult(ok=True, intent=cmd.intent, detail="resumed")
 

@@ -84,6 +84,12 @@ services:
       AIDEVSWARM_REDIS_PORT: "6379"
       AIDEVSWARM_WORKSPACES_DIR: /workspace/workspaces
       AIDEVSWARM_PHOENIX_ENDPOINT: http://phoenix:6006/v1/traces
+      # CI sandbox: this container has no Docker socket, so the real
+      # docker-in-docker CI gate can't run here — use the in-memory
+      # sandbox (CI treated as pass; quality rests on the Reviewer).
+      # Set to "docker" once you mount the host Docker socket + build
+      # the aidevswarm-sandbox image (see README).
+      AIDEVSWARM_SANDBOX_MODE: ${AIDEVSWARM_SANDBOX_MODE:-inmemory}
       # uvicorn binds 0.0.0.0 inside the container so docker's
       # 127.0.0.1:8080 publish line can reach it. The security
       # guarantee is at the docker layer, not the uvicorn layer.

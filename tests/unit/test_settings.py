@@ -13,10 +13,11 @@ def test_defaults_are_sane(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.daily_token_budget > 0
     assert settings.per_milestone_token_budget > 0
     assert settings.build_concurrency >= 1
-    # Default is autonomous (no human approval gate); see Settings.
-    assert settings.require_approval is False
+    # Default keeps the human approval gate on (autonomous = opt-in).
+    assert settings.require_approval is True
     assert settings.ideation_min_score == 80
     assert settings.ideation_max_rounds == 5
+    assert settings.sandbox_mode == "docker"
 
 
 def test_env_override(monkeypatch: pytest.MonkeyPatch) -> None:

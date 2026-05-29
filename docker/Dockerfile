@@ -45,8 +45,17 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/workspace/src
 
+# git: workspace commits/pushes. node + the Claude Code CLI: the
+# claude-agent-sdk spawns the `claude` binary to drive the Developer /
+# Tester roles — WITHOUT it every milestone build fails instantly
+# (0 tokens, stop_reason=stop_sequence). Node 20 from NodeSource.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates \
+ && apt-get install -y --no-install-recommends git ca-certificates curl gnupg \
+ && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && npm install -g @anthropic-ai/claude-code \
+ && apt-get purge -y gnupg \
+ && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --create-home --uid 1000 aidevswarm
 

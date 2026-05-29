@@ -29,7 +29,11 @@ CREATE TABLE IF NOT EXISTS milestones (
     commit_hash   text,
     created_at    timestamptz NOT NULL DEFAULT now(),
     updated_at    timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (project_id, ordinal)
+    -- DEFERRABLE so the replanner's bulk ordinal shift
+    -- (UPDATE ... SET ordinal = ordinal + 1) doesn't transiently collide
+    -- mid-statement; uniqueness is enforced at COMMIT instead.
+    CONSTRAINT milestones_project_id_ordinal_key
+        UNIQUE (project_id, ordinal) DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE INDEX IF NOT EXISTS milestones_project_idx ON milestones (project_id);

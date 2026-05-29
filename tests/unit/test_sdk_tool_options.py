@@ -81,8 +81,9 @@ def test_role_model_tiering(tmp_path: Path) -> None:
     tester = ClaudeAgentSDKTesterTool(settings, repo)
     dev_opts = dev.build_options(ms, ws, max_turns=10, max_budget_usd=1.0, resume=None)
     tester_opts = tester.build_options(ms, ws, max_turns=10, max_budget_usd=1.0, resume=None)
-    assert dev_opts.model == "anthropic/claude-opus-4-7"
-    assert tester_opts.model == "anthropic/claude-haiku-4-5"
+    # The SDK/CLI gets a BARE model id — the LiteLLM "anthropic/" prefix is stripped.
+    assert dev_opts.model == "claude-opus-4-7"
+    assert tester_opts.model == "claude-haiku-4-5"
 
 
 def test_resume_threads_through_options(tmp_path: Path) -> None:
@@ -298,7 +299,12 @@ async def test_arun_persists_session_and_records_spend(
         session_id="sess-1",
         total_cost_usd=0.12,
         result="done",
-        usage={"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 20},
+        usage={
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "cache_read_input_tokens": 20,
+            "cache_creation_input_tokens": 15,
+        },
     )
 
     class _FakeClient:
@@ -335,7 +341,7 @@ async def test_arun_persists_session_and_records_spend(
     # cost is the SDK's exact total_cost_usd.
     assert len(token_repo.records) == 1
     rec = token_repo.records[0]
-    assert rec["input_tokens"] == 120  # 100 + 20 cache_read
+    assert rec["input_tokens"] == 115  # input(100) + cache_creation(15); cache_read excluded
     assert rec["output_tokens"] == 50
     assert rec["cost_usd"] == 0.12
     assert rec["role"] == "Developer"

@@ -19,7 +19,7 @@ from aidevswarm.crews import CrewaiBuildCrew, CrewaiIdeationCrew, CrewaiPlanning
 from aidevswarm.crews.ideation.novelty import NoveltyChecker
 from aidevswarm.crews.replanning import CrewaiReplanningCrew
 from aidevswarm.db.pool import close_pool, open_pool
-from aidevswarm.db.protocols import IdeaEvaluationRepo
+from aidevswarm.db.protocols import IdeaEvaluationRepo, ProjectRepo
 from aidevswarm.db.repositories import (
     PsycopgIdeaEvaluationRepo,
     PsycopgMilestoneRepo,
@@ -46,6 +46,7 @@ from aidevswarm.tools import (
     DefaultTokenBudget,
     DockerSandbox,
     GitHubPublisher,
+    InMemorySandbox,
     PgvectorMemory,
     RedisKillSwitch,
     SpendRecorder,
@@ -98,7 +99,7 @@ def _build_tick(
         replanning_crew=CrewaiReplanningCrew(settings, recorder=recorder),
         auto_split=AutoSplitPredictor(settings, session_repo),
         workspace_manager=WorkspaceManager(settings.workspaces_dir),
-        sandbox=DockerSandbox(),
+        sandbox=(InMemorySandbox() if settings.sandbox_mode == "inmemory" else DockerSandbox()),
         telegram=TelegramNotifier(settings),
         github=GitHubPublisher(settings),
         kill_switch=RedisKillSwitch.from_settings(settings),
@@ -165,20 +166,9 @@ async def _async_main() -> None:
     )
 
     async def ideation_cron() -> None:
-        # Only ideate when the swarm is IDLE — no active project and an
-        # empty queue. This keeps the 24h cron from stockpiling ideas (and
-        # burning tokens) when there's already work in flight. ARCHITECTURE
-        # wants a few ideas a week, one project building at a time.
-        active = await asyncio.to_thread(project_repo.get_active)
-        queued = await asyncio.to_thread(project_repo.list_by_state, ProjectState.QUEUED)
-        if active is not None or queued:
-            log.info(
-                "ideation_cron.skip_has_work",
-                active=active.name if active else None,
-                queued=len(queued),
-            )
-            return
-        log.info("ideation_cron.run")
+        # _run_ideation_once self-guards (skips while a project is active
+        # or awaiting approval), so the cron just invokes it.
+        log.info("ideation_cron.tick")
         await _run_ideation_once(tick, idea_repo, log)
 
     scheduler = Scheduler(
@@ -234,43 +224,55 @@ async def _run_ideation_once(
     project; the first round that yields a winner queues it and stops.
     LLM work runs on a worker thread so the event loop stays responsive.
     """
-    settings = tick._d.settings
-    for round_num in range(1, settings.ideation_max_rounds + 1):
-        log.info("ideation.round.start", round=round_num)
-        try:
-            scored = await asyncio.to_thread(tick._d.ideation_crew.run)
-        except Exception as exc:
-            log.warning("ideation.round.failed", round=round_num, error=str(exc))
-            continue
-        if not scored:
-            log.info("ideation.round.empty", round=round_num)
-            continue
-
-        passing = [
-            s
-            for s in scored
-            if s.total >= settings.ideation_min_score and s.rejected_reason is None
-        ]
-        best = max(passing, key=lambda s: s.total) if passing else None
-
-        if best is not None:
-            project = _project_from_idea(best)
-            await asyncio.to_thread(tick._d.project_repo.create, project)
-            await asyncio.to_thread(
-                _persist_evaluations, idea_repo, scored, round_num, best, project.id
-            )
-            log.info(
-                "ideation.queued",
-                project=project.name,
-                score=int(best.total),
-                round=round_num,
-            )
+    # Never ideate while ANY non-terminal project exists — active,
+    # queued, awaiting approval, OR blocked. A blocked project is NOT
+    # abandoned for a new one: the swarm waits for the operator to fix +
+    # resume it (its milestones + workspace persist, so it continues
+    # from where it left off). New ideas only flow once every project is
+    # done or killed.
+    if await asyncio.to_thread(_swarm_has_work, tick._d.project_repo):
+        log.info("ideation.skip_has_work")
+        return
+    for round_num in range(1, tick._d.settings.ideation_max_rounds + 1):
+        if await _ideate_round(tick, idea_repo, round_num, log):
             return
+    log.info("ideation.exhausted", rounds=tick._d.settings.ideation_max_rounds)
 
+
+def _swarm_has_work(project_repo: ProjectRepo) -> bool:
+    """True if any non-terminal project exists (active / queued / blocked)."""
+    if project_repo.get_active() is not None:
+        return True
+    if project_repo.list_by_state(ProjectState.QUEUED):
+        return True
+    return bool(project_repo.list_by_state(ProjectState.BLOCKED))
+
+
+async def _ideate_round(
+    tick: Tick, idea_repo: IdeaEvaluationRepo, round_num: int, log: Any
+) -> bool:
+    """Run one ideation round. Returns True if it queued a project."""
+    log.info("ideation.round.start", round=round_num)
+    try:
+        scored = await asyncio.to_thread(tick._d.ideation_crew.run)
+    except Exception as exc:
+        log.warning("ideation.round.failed", round=round_num, error=str(exc))
+        return False
+    if not scored:
+        log.info("ideation.round.empty", round=round_num)
+        return False
+    min_score = tick._d.settings.ideation_min_score
+    passing = [s for s in scored if s.total >= min_score and s.rejected_reason is None]
+    if not passing:
         await asyncio.to_thread(_persist_evaluations, idea_repo, scored, round_num, None, None)
         log.info("ideation.round.no_pass", round=round_num, count=len(scored))
-
-    log.info("ideation.exhausted", rounds=settings.ideation_max_rounds)
+        return False
+    best = max(passing, key=lambda s: s.total)
+    project = _project_from_idea(best)
+    await asyncio.to_thread(tick._d.project_repo.create, project)
+    await asyncio.to_thread(_persist_evaluations, idea_repo, scored, round_num, best, project.id)
+    log.info("ideation.queued", project=project.name, score=int(best.total), round=round_num)
+    return True
 
 
 def _persist_evaluations(

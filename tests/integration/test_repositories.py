@@ -182,6 +182,39 @@ def test_milestone_next_pending_returns_none_when_empty(
     assert mrepo.next_pending(project.id) is None
 
 
+def test_milestone_replace_with_shifts_ordinals_without_collision(
+    live_pool: ConnectionPool, project: Project
+) -> None:
+    """Regression: the bulk ordinal shift must not trip the UNIQUE
+    (project_id, ordinal) constraint (needs it DEFERRABLE)."""
+    mrepo = PsycopgMilestoneRepo(live_pool)
+    mrepo.create_many(project.id, [_ms_spec(f"m{i}") for i in range(4)])  # ordinals 0..3
+    first = mrepo.next_pending(project.id)
+    assert first is not None
+    children = mrepo.replace_with(first.id, [_ms_spec("c1"), _ms_spec("c2")])
+    assert len(children) == 2
+    listed = mrepo.list_for_project(project.id)
+    ordinals = [m.ordinal for m in listed]
+    assert len(listed) == 5  # 4 - 1 parent + 2 children
+    assert ordinals == sorted(ordinals)
+    assert len(ordinals) == len(set(ordinals))  # no duplicates
+
+
+def test_milestone_insert_after_shifts_ordinals_without_collision(
+    live_pool: ConnectionPool, project: Project
+) -> None:
+    mrepo = PsycopgMilestoneRepo(live_pool)
+    mrepo.create_many(project.id, [_ms_spec(f"m{i}") for i in range(4)])
+    first = mrepo.next_pending(project.id)
+    assert first is not None
+    mrepo.insert_after(first.id, _ms_spec("inserted"))
+    listed = mrepo.list_for_project(project.id)
+    ordinals = [m.ordinal for m in listed]
+    assert len(listed) == 5
+    assert ordinals == sorted(ordinals)
+    assert len(ordinals) == len(set(ordinals))
+
+
 # ------------------------- TokenLogRepo -------------------------
 
 

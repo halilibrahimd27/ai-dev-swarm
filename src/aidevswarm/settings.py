@@ -93,18 +93,22 @@ class Settings(BaseSettings):
     daily_token_budget: int = Field(
         default=2_000_000, validation_alias="AIDEVSWARM_DAILY_TOKEN_BUDGET"
     )
+    # A multi-turn SDK build legitimately spends a lot of (new) tokens;
+    # this is a runaway circuit breaker, not a deadline. 1M leaves room
+    # for a couple of retries before tripping.
     per_milestone_token_budget: int = Field(
-        default=400_000, validation_alias="AIDEVSWARM_PER_MILESTONE_TOKEN_BUDGET"
+        default=1_000_000, validation_alias="AIDEVSWARM_PER_MILESTONE_TOKEN_BUDGET"
     )
     build_concurrency: int = Field(default=1, validation_alias="AIDEVSWARM_BUILD_CONCURRENCY")
     milestone_retry_limit: int = Field(
         default=3, validation_alias="AIDEVSWARM_MILESTONE_RETRY_LIMIT"
     )
-    # Default OFF: the operator chose fully-autonomous operation — an
-    # accepted idea goes straight to building + GitHub push, no human
-    # gate. Set AIDEVSWARM_REQUIRE_APPROVAL=true to re-enable the
-    # one-click checkpoint.
-    require_approval: bool = Field(default=False, validation_alias="AIDEVSWARM_REQUIRE_APPROVAL")
+    # Default ON: an accepted idea is decomposed into a milestone graph
+    # then PARKS at awaiting_approval until the operator approves it (web
+    # UI or Telegram). Only then does it start coding + pushing. Set
+    # AIDEVSWARM_REQUIRE_APPROVAL=false for fully-autonomous operation
+    # (no human gate) — documented in the README.
+    require_approval: bool = Field(default=True, validation_alias="AIDEVSWARM_REQUIRE_APPROVAL")
     tick_seconds: int = Field(default=30, validation_alias="AIDEVSWARM_TICK_SECONDS")
 
     # --- Ideation gate / loop --------------------------------------------
@@ -114,12 +118,23 @@ class Settings(BaseSettings):
     ideation_min_score: int = Field(default=80, validation_alias="AIDEVSWARM_IDEATION_MIN_SCORE")
     ideation_max_rounds: int = Field(default=5, validation_alias="AIDEVSWARM_IDEATION_MAX_ROUNDS")
 
+    # --- SDK build caps (Developer / Tester) -----------------------------
+    # Turns + per-call USD cap the Claude Agent SDK enforces. 40 turns is
+    # too few to FINISH a real scaffold milestone (it kept hitting the cap
+    # and auto-splitting forever). 80 gives room to complete; the SDK
+    # aborts at the budget cap regardless.
+    sdk_max_turns: int = Field(default=80, validation_alias="AIDEVSWARM_SDK_MAX_TURNS")
+    sdk_max_budget_usd: float = Field(default=5.0, validation_alias="AIDEVSWARM_SDK_MAX_BUDGET_USD")
+
     # --- Phase 4 replanner ------------------------------------------------
     # Auto-split fires BEFORE the LLM-driven replanner crew runs. It's a
     # cheap circuit breaker — if a milestone's predicted turns/cost
     # exceeds these caps, the milestone is mechanically split into two.
+    # Below the SDK's max_turns (40): a milestone that burned ~all its
+    # turns and still failed is too big — bisect it on the next replan
+    # instead of retrying the same oversized scope.
     auto_split_max_turns: int = Field(
-        default=40, validation_alias="AIDEVSWARM_AUTO_SPLIT_MAX_TURNS"
+        default=30, validation_alias="AIDEVSWARM_AUTO_SPLIT_MAX_TURNS"
     )
     auto_split_max_cost_usd: float = Field(
         default=3.0, validation_alias="AIDEVSWARM_AUTO_SPLIT_MAX_COST_USD"
@@ -132,6 +147,16 @@ class Settings(BaseSettings):
     workspaces_dir: Path = Field(
         default=Path("/workspace/workspaces"),
         validation_alias="AIDEVSWARM_WORKSPACES_DIR",
+    )
+
+    # CI sandbox for generated code. "docker" runs the milestone's tests
+    # in an ephemeral, network-less container (the safe production
+    # default — requires the host Docker socket + the sandbox image).
+    # "inmemory" skips the container and treats CI as pass — use it only
+    # when Docker-in-Docker isn't available; it does NOT run the
+    # generated tests, so quality rests on the Reviewer alone.
+    sandbox_mode: Literal["docker", "inmemory"] = Field(
+        default="docker", validation_alias="AIDEVSWARM_SANDBOX_MODE"
     )
 
     # --- Observability (Arize Phoenix) ------------------------------------
