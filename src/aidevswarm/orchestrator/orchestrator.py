@@ -16,6 +16,7 @@ from typing import Any
 
 from aidevswarm.api import build_app, run_server
 from aidevswarm.crews import CrewaiBuildCrew, CrewaiIdeationCrew, CrewaiPlanningCrew
+from aidevswarm.crews.finance import FinanceVoice
 from aidevswarm.crews.ideation.novelty import NoveltyChecker, SelfHistoryDedup
 from aidevswarm.crews.replanning import CrewaiReplanningCrew
 from aidevswarm.db.pool import close_pool, open_pool
@@ -111,7 +112,7 @@ def _build_tick(
             ),
             recorder=recorder,
         ),
-        planning_crew=CrewaiPlanningCrew(settings, recorder=recorder),
+        planning_crew=CrewaiPlanningCrew(settings, recorder=recorder, transcript=transcript),
         build_crew=CrewaiBuildCrew(
             settings,
             session_repo,
@@ -119,7 +120,7 @@ def _build_tick(
             recorder=recorder,
             transcript=transcript,
         ),
-        replanning_crew=CrewaiReplanningCrew(settings, recorder=recorder),
+        replanning_crew=CrewaiReplanningCrew(settings, recorder=recorder, transcript=transcript),
         auto_split=AutoSplitPredictor(settings, session_repo),
         workspace_manager=WorkspaceManager(
             settings.workspaces_dir,
@@ -132,6 +133,7 @@ def _build_tick(
         kill_switch=RedisKillSwitch.from_settings(settings, pause_repo=project_repo),
         token_budget=token_budget,
         transition_sink=transition_sink,
+        finance_voice=FinanceVoice(settings, token_repo, transcript),
     )
     return Tick(deps)
 
@@ -195,6 +197,7 @@ async def _async_main() -> None:
         settings=settings,
         settings_repo=settings_override_repo,
         milestone_repo=milestone_repo,
+        transcript=transcript_publisher,
     )
     api_app = build_app(
         settings=settings,

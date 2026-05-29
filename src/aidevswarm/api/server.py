@@ -51,7 +51,7 @@ from aidevswarm.db.protocols import (
 )
 from aidevswarm.db.transcript import TranscriptRepo
 from aidevswarm.logging_config import get_logger
-from aidevswarm.observability import EventBridge, SecretRedactor, Topic
+from aidevswarm.observability import DECISION_KIND, EventBridge, SecretRedactor, Topic
 from aidevswarm.orchestrator.command_router import CommandResult, CommandRouter
 from aidevswarm.schemas import Command, Milestone, Project
 from aidevswarm.settings import Settings
@@ -216,6 +216,19 @@ def build_app(
             return []
         entries = await asyncio.to_thread(transcript_repo.list_for_project, project_id)
         return [json.loads(redactor(e.model_dump_json())) for e in entries]
+
+    @app.get("/api/boardroom/{project_id}")
+    async def boardroom(project_id: UUID) -> list[dict[str, Any]]:
+        """The boardroom stream: only high-level DECISION entries (PM,
+        Architect, Reviewer, Finance, Operator) — the company-meeting view,
+        not the raw firehose. Replayed on load like the transcript; the live
+        SSE stream carries new decisions, which the UI filters client-side."""
+        if transcript_repo is None:
+            return []
+        entries = await asyncio.to_thread(transcript_repo.list_for_project, project_id)
+        return [
+            json.loads(redactor(e.model_dump_json())) for e in entries if e.kind == DECISION_KIND
+        ]
 
     # ------------------------------------------------------------------
     # REST: commands (shared with Telegram)

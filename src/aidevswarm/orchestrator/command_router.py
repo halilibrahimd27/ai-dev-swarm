@@ -31,6 +31,7 @@ from aidevswarm.db.settings_store import (
     is_editable,
 )
 from aidevswarm.logging_config import get_logger
+from aidevswarm.observability import TranscriptPublisher, publish_decision
 from aidevswarm.schemas import (
     AbortProject,
     Approve,
@@ -96,6 +97,9 @@ class CommandRouter:
     # project's exhausted milestone retry counters. Optional (tests/Phase 5
     # callers may omit it) — resume still works, it just won't reset counts.
     milestone_repo: MilestoneRepo | None = None
+    # Optional transcript publisher so an operator steering note also shows
+    # up as a "role=Operator" decision in the boardroom view.
+    transcript: TranscriptPublisher | None = None
 
     def __post_init__(self) -> None:
         self._log = get_logger(__name__)
@@ -159,6 +163,14 @@ class CommandRouter:
 
     def _inject_note(self, cmd: InjectNote) -> CommandResult:
         note_id = self.steering_repo.add_note(cmd.project_id, cmd.body, author=cmd.author)
+        # Surface the operator's steer in the boardroom so the meeting shows
+        # the human's input alongside the agents' decisions.
+        publish_decision(
+            self.transcript,
+            project_id=cmd.project_id,
+            role="Operator",
+            text=cmd.body,
+        )
         self._log.info(
             "router.note_injected",
             project_id=str(cmd.project_id),

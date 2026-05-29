@@ -18,6 +18,7 @@ from pydantic import TypeAdapter
 
 from aidevswarm.crews._spend import record_crew_spend
 from aidevswarm.logging_config import get_logger
+from aidevswarm.observability import TranscriptPublisher, publish_decision
 from aidevswarm.schemas import (
     Milestone,
     MilestoneSession,
@@ -46,11 +47,13 @@ class CrewaiReplanningCrew:
         *,
         steering_repo: SteeringRepo | None = None,
         recorder: SpendRecorder | None = None,
+        transcript: TranscriptPublisher | None = None,
     ) -> None:
         self._settings = settings
         self._log = get_logger(__name__)
         self._steering = steering_repo
         self._recorder = recorder
+        self._transcript = transcript
         self._architect_template = _load("architect")
         self._pm_template = _load("pm")
 
@@ -136,7 +139,14 @@ class CrewaiReplanningCrew:
             role="replanner",
             model=self._settings.model_strong,
         )
-        return self._parse(result)
+        action = self._parse(result)
+        publish_decision(
+            self._transcript,
+            project_id=project.id,
+            role="Architect",
+            text=f"Replan before '{next_milestone.title}': {_describe_action(action)}",
+        )
+        return action
 
     @staticmethod
     def _parse(crew_output: Any) -> ReplannerAction:
@@ -148,6 +158,13 @@ class CrewaiReplanningCrew:
             # LLM produced something the schema doesn't accept — be
             # defensive and Noop rather than crash the tick.
             return Noop()
+
+
+def _describe_action(action: ReplannerAction) -> str:
+    """One-line, human-readable summary of a replanner action for the boardroom."""
+    name = type(action).__name__
+    reason = getattr(action, "reason", "") or getattr(action, "rationale", "")
+    return f"{name}" + (f" — {reason}" if reason else "")
 
 
 def _summarise_sessions(sessions: Sequence[MilestoneSession]) -> str:

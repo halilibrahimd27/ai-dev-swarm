@@ -115,6 +115,33 @@ def test_inject_note_writes_a_row() -> None:
     assert steering.notes[0]["body"] == "focus on tests"
 
 
+def test_inject_note_also_posts_an_operator_decision_to_the_boardroom() -> None:
+    from aidevswarm.observability import TranscriptEntry
+
+    class _Sink:
+        def __init__(self) -> None:
+            self.entries: list[TranscriptEntry] = []
+
+        def publish(self, entry: TranscriptEntry) -> None:
+            self.entries.append(entry)
+
+    project = Project(name="p", spec=_spec())
+    project_repo = InMemoryProjectRepo()
+    project_repo.create(project)
+    sink = _Sink()
+    router = CommandRouter(
+        project_repo=project_repo,
+        steering_repo=_FakeSteeringRepo(),
+        kill_switch=InMemoryKillSwitch(),
+        transcript=sink,
+    )
+    router.dispatch(InjectNote(project_id=project.id, body="prioritise the parser"))
+    assert len(sink.entries) == 1
+    assert sink.entries[0].role == "Operator"
+    assert sink.entries[0].kind == "decision"
+    assert sink.entries[0].text == "prioritise the parser"
+
+
 def test_pause_is_recoverable_not_a_kill() -> None:
     """Pause must set the recoverable pause signal, NOT the kill switch.
 

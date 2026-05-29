@@ -91,6 +91,41 @@ class TranscriptPublisher(Protocol):
     def publish(self, entry: TranscriptEntry) -> None: ...
 
 
+# The "boardroom" stream: high-signal, role-tagged DECISIONS (PM
+# counter-proposes, Architect picks a stack, Reviewer approves/rejects,
+# Finance flags cost), distinct from the raw turn-by-turn firehose. The web
+# UI's Boardroom view filters the transcript to exactly this kind.
+DECISION_KIND = "decision"
+
+
+def publish_decision(
+    publisher: TranscriptPublisher | None,
+    *,
+    project_id: UUID | None,
+    role: str,
+    text: str,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Publish one boardroom-level decision entry. Best-effort, never raises.
+
+    A no-op when ``publisher`` is None (tests / pre-Phase-5 callers), so
+    crews can call it unconditionally without a wiring guard.
+    """
+    if publisher is None or not text:
+        return
+    with contextlib.suppress(Exception):  # a UI sink must never break a crew
+        publisher.publish(
+            TranscriptEntry(
+                topic="transcript",
+                project_id=project_id,
+                role=role,
+                kind=DECISION_KIND,
+                text=text,
+                extra=extra or {},
+            )
+        )
+
+
 class EventBridge:
     """Fan CrewAI/Tick events out to per-topic asyncio queues."""
 
@@ -299,4 +334,12 @@ class EventBridge:
         crewai_event_bus.register_handler(LLMCallCompletedEvent, _llm_done)
 
 
-__all__ = ["EventBridge", "TranscriptEntry", "TranscriptPublisher", "TOPICS", "Topic"]
+__all__ = [
+    "EventBridge",
+    "TranscriptEntry",
+    "TranscriptPublisher",
+    "publish_decision",
+    "DECISION_KIND",
+    "TOPICS",
+    "Topic",
+]

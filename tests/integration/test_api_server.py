@@ -392,6 +392,40 @@ def test_transcript_history_without_repo_returns_empty() -> None:
     assert body == []
 
 
+def test_boardroom_endpoint_returns_only_decisions() -> None:
+    settings = Settings(AIDEVSWARM_API_HOST="127.0.0.1", AIDEVSWARM_API_PORT=18080)
+    pid = uuid4()
+    repo = _FakeTranscriptRepo()
+    repo.append(
+        TranscriptEntry(
+            topic="transcript", project_id=pid, role="PM", kind="decision", text="Decomposed into 5"
+        )
+    )
+    repo.append(
+        TranscriptEntry(
+            topic="transcript", project_id=pid, role="Developer", kind="assistant", text="noise"
+        )
+    )
+    app = build_app(
+        settings=settings,
+        project_repo=InMemoryProjectRepo(),
+        milestone_repo=InMemoryMilestoneRepo(),
+        bridge=EventBridge(),
+        router=CommandRouter(
+            project_repo=InMemoryProjectRepo(),
+            steering_repo=_FakeSteeringRepo(),
+            kill_switch=InMemoryKillSwitch(),
+        ),
+        redactor=SecretRedactor(settings.redact_patterns),
+        transcript_repo=repo,
+    )
+    with TestClient(app) as client:
+        body = client.get(f"/api/boardroom/{pid}").json()
+    assert len(body) == 1  # only the decision entry, not the raw firehose
+    assert body[0]["role"] == "PM"
+    assert body[0]["kind"] == "decision"
+
+
 def test_settings_endpoint_lists_editable_knobs_without_secrets() -> None:
     app, *_ = _build()
     with TestClient(app) as client:

@@ -28,7 +28,7 @@ from aidevswarm.crews._prompts import load_prompt
 from aidevswarm.crews._spend import record_crew_spend
 from aidevswarm.db.sessions import MilestoneSessionRepo
 from aidevswarm.logging_config import get_logger
-from aidevswarm.observability import TranscriptEntry, TranscriptPublisher
+from aidevswarm.observability import TranscriptEntry, TranscriptPublisher, publish_decision
 from aidevswarm.schemas import Milestone, MilestoneBuildResult
 from aidevswarm.settings import Settings
 from aidevswarm.steering import SteeringRepo, render_prompt
@@ -112,6 +112,16 @@ class CrewaiBuildCrew:
             milestone,
             "review_done",
             f"Reviewer: {'APPROVED' if verdict.success else 'REJECTED'} — {verdict.summary}",
+        )
+        # Boardroom-level decision: the Reviewer's accept/reject call.
+        publish_decision(
+            self._transcript,
+            project_id=milestone.project_id,
+            role="Reviewer",
+            text=(
+                f"{'Approved' if verdict.success else 'Rejected'} '{milestone.title}': "
+                f"{verdict.summary}"
+            ),
         )
         return verdict
 

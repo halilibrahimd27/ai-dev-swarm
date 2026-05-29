@@ -19,6 +19,7 @@ from aidevswarm.crews._parsing import clean_milestone_dict, loads_lenient
 from aidevswarm.crews._prompts import load_prompt
 from aidevswarm.crews._spend import record_crew_spend
 from aidevswarm.logging_config import get_logger
+from aidevswarm.observability import TranscriptPublisher, publish_decision
 from aidevswarm.schemas import AcceptanceCriterion, MilestoneGraph, MilestoneSpec, ProjectSpec
 from aidevswarm.settings import Settings
 from aidevswarm.steering import SteeringRepo, render_prompt
@@ -36,11 +37,13 @@ class CrewaiPlanningCrew:
         *,
         steering_repo: SteeringRepo | None = None,
         recorder: SpendRecorder | None = None,
+        transcript: TranscriptPublisher | None = None,
     ) -> None:
         self._settings = settings
         self._log = get_logger(__name__)
         self._steering = steering_repo
         self._recorder = recorder
+        self._transcript = transcript
         # Store the raw templates; render per-run so steering notes added
         # between runs are picked up.
         self._pm_template = load_prompt(_CREW_DIR, "pm")
@@ -124,6 +127,16 @@ class CrewaiPlanningCrew:
             raise ValueError("planning crew produced zero parseable milestones")
         graph = MilestoneGraph(milestones=specs)
         self._log.info("planning.done", milestones=len(graph.milestones))
+        titles = ", ".join(m.title for m in graph.milestones[:8])
+        publish_decision(
+            self._transcript,
+            project_id=project_id,
+            role="PM",
+            text=(
+                f"Decomposed '{spec.title}' into {len(graph.milestones)} milestones: {titles}"
+                + ("…" if len(graph.milestones) > 8 else "")
+            ),
+        )
         return graph
 
     @staticmethod

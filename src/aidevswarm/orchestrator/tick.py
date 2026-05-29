@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from aidevswarm.crews.finance import FinanceVoice
 from aidevswarm.crews.protocols import BuildCrew, IdeationCrew, PlanningCrew
 from aidevswarm.crews.replanning.protocols import ReplanningCrew
 from aidevswarm.db.protocols import MilestoneRepo, ProjectRepo
@@ -83,6 +84,9 @@ class TickDeps:
     # orchestrator wires this to publish a `projects` SSE event so the web
     # UI updates live; tests leave it None.
     transition_sink: Callable[[Project], None] | None = None
+    # Optional Finance/Cost voice that comments on spend in the boardroom
+    # after planning + each milestone. None in tests / Phase 0-4.
+    finance_voice: FinanceVoice | None = None
 
 
 class Tick:
@@ -156,6 +160,8 @@ class Tick:
     def _plan(self, project: Project) -> Project:
         graph = self._d.planning_crew.run(project.id, project.spec)
         self._d.milestone_repo.create_many(project.id, graph.milestones)
+        if self._d.finance_voice is not None:
+            self._d.finance_voice.on_plan(project, len(graph.milestones))
         next_state = (
             ProjectState.AWAITING_APPROVAL
             if self._d.settings.require_approval
@@ -258,6 +264,8 @@ class Tick:
         # Push this milestone's commit straight away so the operator sees
         # the repo grow over the days/weeks of the build.
         self._push(project, workspace)
+        if self._d.finance_voice is not None:
+            self._d.finance_voice.on_milestone_done(project, milestone.id, milestone.title)
         # Phase 4: route to replanner so it can decide what (if anything)
         # to change about the upcoming milestone, and check the
         # consolidation cadence.
