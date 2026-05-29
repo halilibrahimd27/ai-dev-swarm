@@ -24,6 +24,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from aidevswarm.db.protocols import ProjectRepo
+from aidevswarm.db.settings_store import (
+    SettingsOverrideRepo,
+    apply_override,
+    get_spec,
+    is_editable,
+)
 from aidevswarm.logging_config import get_logger
 from aidevswarm.schemas import (
     AbortProject,
@@ -42,8 +48,10 @@ from aidevswarm.schemas import (
     ShowTranscript,
     SwitchToIdea,
     TransformProject,
+    UpdateSetting,
     requires_confirmation,
 )
+from aidevswarm.settings import Settings
 from aidevswarm.steering import SteeringRepo
 from aidevswarm.tools.protocols import KillSwitch as KillSwitchProto
 
@@ -75,6 +83,11 @@ class CommandRouter:
     # error so the UI shows "wiring not available" rather than
     # silently swallowing the request.
     ideate_runner: Callable[[], None] = field(default=lambda: None)
+    # Operator-editable operational settings. When both are wired,
+    # `update_setting` validates + persists an override and applies it onto
+    # the live Settings object. Unset (tests/Phase 5) => a soft error.
+    settings: Settings | None = None
+    settings_repo: SettingsOverrideRepo | None = None
 
     def __post_init__(self) -> None:
         self._log = get_logger(__name__)
@@ -114,6 +127,7 @@ class CommandRouter:
             KillSwitch: self._kill_switch,
             ListState: self._list_state,
             ShowTranscript: self._show_transcript,
+            UpdateSetting: self._update_setting,
         }
 
     # ------------------------------------------------------------------
@@ -203,6 +217,27 @@ class CommandRouter:
             intent=cmd.intent,
             detail="ideation crew scheduled (watch transcript / Phoenix)",
         )
+
+    def _update_setting(self, cmd: UpdateSetting) -> CommandResult:
+        if self.settings is None or self.settings_repo is None:
+            return CommandResult(ok=False, intent=cmd.intent, detail="settings editing not wired")
+        if not is_editable(cmd.key):
+            return CommandResult(
+                ok=False, intent=cmd.intent, detail=f"'{cmd.key}' is not an editable setting"
+            )
+        try:
+            value = apply_override(self.settings, cmd.key, cmd.value)
+        except ValueError as exc:
+            return CommandResult(ok=False, intent=cmd.intent, detail=str(exc))
+        self.settings_repo.upsert(cmd.key, cmd.value.strip())
+        spec = get_spec(cmd.key)
+        note = (
+            " (saved — restart to take effect)"
+            if spec is not None and spec.restart_required
+            else " (applied live)"
+        )
+        self._log.info("router.setting_updated", key=cmd.key, value=str(value))
+        return CommandResult(ok=True, intent=cmd.intent, detail=f"{cmd.key} = {value}{note}")
 
     # ------------------------------------------------------------------
     # Destructive handlers (only reached if confirmed=True)

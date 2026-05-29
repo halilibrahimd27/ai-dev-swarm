@@ -27,6 +27,7 @@ from aidevswarm.db.repositories import (
     PsycopgTokenLogRepo,
 )
 from aidevswarm.db.sessions import PsycopgMilestoneSessionRepo
+from aidevswarm.db.settings_store import PsycopgSettingsOverrideRepo, apply_all
 from aidevswarm.db.transcript import PersistingTranscriptPublisher, PsycopgTranscriptRepo
 from aidevswarm.logging_config import configure_logging, get_logger
 from aidevswarm.observability import (
@@ -141,6 +142,12 @@ async def _async_main() -> None:
     # agent call lands in the trace tree.
     bootstrap_phoenix(settings)
 
+    # Apply any operator-saved setting overrides onto the live Settings
+    # object BEFORE building the tick — so startup-read knobs
+    # (build_concurrency, sandbox_mode) honour the saved values too.
+    settings_override_repo = PsycopgSettingsOverrideRepo(open_pool(settings))
+    apply_all(settings, settings_override_repo.get_all())
+
     # Phase 5 control plane wiring — FastAPI + SSE + Telegram all share
     # one EventBridge + one CommandRouter + one SecretRedactor. Build the
     # bridge BEFORE the tick so each project state transition publishes a
@@ -181,6 +188,8 @@ async def _async_main() -> None:
         steering_repo=steering_repo,
         kill_switch=tick._d.kill_switch,
         ideate_runner=lambda: (loop.create_task(_run_ideation_once(tick, idea_repo, log)), None)[1],
+        settings=settings,
+        settings_repo=settings_override_repo,
     )
     api_app = build_app(
         settings=settings,

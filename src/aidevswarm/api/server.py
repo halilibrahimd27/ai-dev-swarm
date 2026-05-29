@@ -141,6 +141,18 @@ def build_app(
         rows = await asyncio.to_thread(_collect_ideas, idea_repo)
         return rows
 
+    @app.get("/api/settings")
+    async def settings_snapshot() -> list[dict[str, Any]]:
+        """Editable operational settings + current values (NO secrets).
+
+        Only the allow-listed keys in db.settings_store.EDITABLE_SETTINGS
+        are exposed; API keys, the DB password, hosts and pool sizes are
+        never returned here. Write via POST /api/commands intent=update_setting.
+        """
+        from aidevswarm.db.settings_store import snapshot
+
+        return snapshot(settings)
+
     @app.get("/api/transcript/{project_id}")
     async def transcript_history(project_id: UUID) -> list[dict[str, Any]]:
         """Persisted transcript for a project — replayed on UI load so the

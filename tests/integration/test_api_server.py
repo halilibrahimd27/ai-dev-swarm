@@ -392,6 +392,22 @@ def test_transcript_history_without_repo_returns_empty() -> None:
     assert body == []
 
 
+def test_settings_endpoint_lists_editable_knobs_without_secrets() -> None:
+    app, *_ = _build()
+    with TestClient(app) as client:
+        rows = client.get("/api/settings").json()
+    keys = {r["key"] for r in rows}
+    assert "daily_token_budget" in keys
+    assert "sandbox_mode" in keys
+    # Secrets / infra must never be exposed here.
+    assert keys.isdisjoint(
+        {"anthropic_api_key", "github_token", "postgres_password", "pg_host", "api_port"}
+    )
+    row = {r["key"]: r for r in rows}["sandbox_mode"]
+    assert row["restart_required"] is True
+    assert "docker" in row["choices"]
+
+
 def test_static_ui_mounted_when_directory_exists(tmp_path: Path) -> None:
     ui = tmp_path / "ui"
     ui.mkdir()

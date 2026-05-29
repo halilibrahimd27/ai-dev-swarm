@@ -89,6 +89,21 @@ class IdeateNow(_Base):
     intent: Literal["ideate_now"] = "ideate_now"
 
 
+class UpdateSetting(_Base):
+    """Change one operator-editable operational setting at runtime.
+
+    ``key`` must be in ``db.settings_store.EDITABLE_SETTINGS`` (budgets,
+    caps, modes, flags); ``value`` is a string coerced + range-checked
+    server-side. Secrets/credentials/hosts are NOT editable and are
+    rejected. The override is persisted and applied onto the live
+    Settings object (some keys take effect only after a restart).
+    """
+
+    intent: Literal["update_setting"] = "update_setting"
+    key: str = Field(min_length=1)
+    value: str
+
+
 # ---------------------------------------------------------------------------
 # Lifecycle (non-destructive but visible)
 # ---------------------------------------------------------------------------
@@ -184,6 +199,7 @@ Command = Annotated[
     | ListState
     | ShowTranscript
     | IdeateNow
+    | UpdateSetting
     | PauseProject
     | ResumeProject
     | AbortProject

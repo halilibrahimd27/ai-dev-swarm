@@ -21,6 +21,7 @@ from aidevswarm.schemas.command import (
     ShowTranscript,
     SwitchToIdea,
     TransformProject,
+    UpdateSetting,
     requires_confirmation,
 )
 from aidevswarm.schemas.idea import CriticScores, Idea, IdeaEvaluation, ScoredIdea
@@ -83,5 +84,6 @@ __all__ = [
     "Split",
     "SwitchToIdea",
     "TransformProject",
+    "UpdateSetting",
     "requires_confirmation",
 ]
