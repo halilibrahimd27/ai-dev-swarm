@@ -27,6 +27,7 @@ from aidevswarm.db.repositories import (
     PsycopgTokenLogRepo,
 )
 from aidevswarm.db.sessions import PsycopgMilestoneSessionRepo
+from aidevswarm.db.transcript import PersistingTranscriptPublisher, PsycopgTranscriptRepo
 from aidevswarm.logging_config import configure_logging, get_logger
 from aidevswarm.observability import (
     EventBridge,
@@ -159,7 +160,14 @@ async def _async_main() -> None:
             )
         )
 
-    tick = _build_tick(settings, transition_sink=_publish_transition, transcript=bridge)
+    # Persist every transcript entry to Postgres, THEN fan out live. The UI
+    # replays the persisted history on load (survives refresh, whole project).
+    transcript_repo = PsycopgTranscriptRepo(open_pool(settings))
+    transcript_publisher = PersistingTranscriptPublisher(transcript_repo, bridge)
+
+    tick = _build_tick(
+        settings, transition_sink=_publish_transition, transcript=transcript_publisher
+    )
     project_repo = tick._d.project_repo
     milestone_repo = tick._d.milestone_repo
     pool_obj = open_pool(settings)  # already opened in _build_tick; reuse
@@ -183,6 +191,7 @@ async def _async_main() -> None:
         redactor=redactor,
         token_repo=PsycopgTokenLogRepo(pool_obj),
         idea_repo=idea_repo,
+        transcript_repo=transcript_repo,
         ui_dir=_UI_DIR if _UI_DIR.is_dir() else None,
     )
 

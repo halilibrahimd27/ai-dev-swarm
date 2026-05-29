@@ -58,6 +58,17 @@ class _FakeSteeringRepo:
         return []
 
 
+class _FakeTranscriptRepo:
+    def __init__(self) -> None:
+        self.entries: list[TranscriptEntry] = []
+
+    def append(self, entry: TranscriptEntry) -> None:
+        self.entries.append(entry)
+
+    def list_for_project(self, project_id: UUID, *, limit: int = 5000) -> list[TranscriptEntry]:
+        return [e for e in self.entries if e.project_id == project_id][:limit]
+
+
 def _spec() -> ProjectSpec:
     return ProjectSpec(
         title="t", summary="s", rationale="r", stack=["python"], tags=["x"], score=85
@@ -338,6 +349,47 @@ def test_spend_endpoint_reports_per_role_breakdown() -> None:
     # Most-expensive role first.
     assert body["by_role"][0]["role"] == "Developer"
     assert body["by_role"][0]["cost_usd"] == 0.30
+
+
+def test_transcript_history_endpoint_returns_redacted_entries() -> None:
+    settings = Settings(AIDEVSWARM_API_HOST="127.0.0.1", AIDEVSWARM_API_PORT=18080)
+    pid = uuid4()
+    repo = _FakeTranscriptRepo()
+    repo.append(
+        TranscriptEntry(
+            topic="transcript",
+            project_id=pid,
+            role="Developer",
+            kind="assistant",
+            text="hello sk-ant-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa world",
+        )
+    )
+    repo.append(TranscriptEntry(topic="transcript", project_id=uuid4(), kind="assistant", text="x"))
+    app = build_app(
+        settings=settings,
+        project_repo=InMemoryProjectRepo(),
+        milestone_repo=InMemoryMilestoneRepo(),
+        bridge=EventBridge(),
+        router=CommandRouter(
+            project_repo=InMemoryProjectRepo(),
+            steering_repo=_FakeSteeringRepo(),
+            kill_switch=InMemoryKillSwitch(),
+        ),
+        redactor=SecretRedactor(settings.redact_patterns),
+        transcript_repo=repo,
+    )
+    with TestClient(app) as client:
+        body = client.get(f"/api/transcript/{pid}").json()
+    assert len(body) == 1  # filtered to this project
+    assert body[0]["role"] == "Developer"
+    assert "sk-ant-aaaaa" not in body[0]["text"]  # redacted on the wire
+
+
+def test_transcript_history_without_repo_returns_empty() -> None:
+    app, *_ = _build()
+    with TestClient(app) as client:
+        body = client.get(f"/api/transcript/{uuid4()}").json()
+    assert body == []
 
 
 def test_static_ui_mounted_when_directory_exists(tmp_path: Path) -> None:

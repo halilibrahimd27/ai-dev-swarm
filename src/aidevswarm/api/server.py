@@ -28,6 +28,7 @@ the Scheduler and ProjectPool.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,7 @@ from aidevswarm.db.protocols import (
     ProjectRepo,
     TokenLogRepo,
 )
+from aidevswarm.db.transcript import TranscriptRepo
 from aidevswarm.logging_config import get_logger
 from aidevswarm.observability import EventBridge, SecretRedactor, Topic
 from aidevswarm.orchestrator.command_router import CommandResult, CommandRouter
@@ -65,6 +67,7 @@ def build_app(
     redactor: SecretRedactor,
     token_repo: TokenLogRepo | None = None,
     idea_repo: IdeaEvaluationRepo | None = None,
+    transcript_repo: TranscriptRepo | None = None,
     ui_dir: Path | None = None,
 ) -> FastAPI:
     """Wire a FastAPI application with all Phase 5 dependencies.
@@ -137,6 +140,16 @@ def build_app(
             return []
         rows = await asyncio.to_thread(_collect_ideas, idea_repo)
         return rows
+
+    @app.get("/api/transcript/{project_id}")
+    async def transcript_history(project_id: UUID) -> list[dict[str, Any]]:
+        """Persisted transcript for a project — replayed on UI load so the
+        conversation survives refreshes (the SSE stream only carries NEW
+        entries). Each entry is redacted exactly like the SSE path."""
+        if transcript_repo is None:
+            return []
+        entries = await asyncio.to_thread(transcript_repo.list_for_project, project_id)
+        return [json.loads(redactor(e.model_dump_json())) for e in entries]
 
     # ------------------------------------------------------------------
     # REST: commands (shared with Telegram)
