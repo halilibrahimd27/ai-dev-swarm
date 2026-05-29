@@ -106,8 +106,10 @@ def test_first_milestone_creates_repo_and_pushes(tmp_path: Path) -> None:
         snapshot is not None and snapshot.github_repo == "https://example.invalid/fake/cool-project"
     )
 
-    # The milestone commit reached the bare "remote".
-    log = subprocess.check_output(["git", "log", "--oneline"], cwd=bare, text=True)
+    # The milestone commit reached the bare "remote". Use --git-dir (not
+    # cwd=) so the check works regardless of the host's
+    # `safe.bareRepository` setting (`=explicit` refuses bare-via-cwd).
+    log = subprocess.check_output(["git", "--git-dir", str(bare), "log", "--oneline"], text=True)
     assert "m0" in log
 
 

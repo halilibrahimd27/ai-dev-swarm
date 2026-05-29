@@ -143,8 +143,10 @@ def test_push_to_local_bare_remote(tmp_path: Path) -> None:
     ws.commit_all("feat: add feature")
     ws.set_remote(f"file://{bare}")
     ws.push("main")
-    # The bare repo now has the commit.
-    log = subprocess.check_output(["git", "log", "--oneline"], cwd=bare, text=True)
+    # The bare repo now has the commit. Use --git-dir (not cwd=) so the
+    # check works regardless of the host's `safe.bareRepository` setting
+    # (with `=explicit`, git refuses to operate in a bare repo via cwd).
+    log = subprocess.check_output(["git", "--git-dir", str(bare), "log", "--oneline"], text=True)
     assert "add feature" in log
 
 
