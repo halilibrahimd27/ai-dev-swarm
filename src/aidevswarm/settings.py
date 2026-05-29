@@ -56,11 +56,12 @@ class Settings(BaseSettings):
     max_output_tokens: int = Field(default=16000, validation_alias="AIDEVSWARM_MAX_OUTPUT_TOKENS")
 
     # --- GitHub -----------------------------------------------------------
+    # The publisher creates a PRIVATE repo per project and pushes the
+    # project's `main` branch milestone-by-milestone as the build runs.
+    # There is no PR / auto-merge mode — the operator owns the repo and
+    # reviews on the diff.
     github_token: SecretStr = Field(default=SecretStr(""), validation_alias="GITHUB_TOKEN")
     github_owner: str = Field(default="", validation_alias="GITHUB_OWNER")
-    github_mode: Literal["pr_only", "auto_merge"] = Field(
-        default="pr_only", validation_alias="AIDEVSWARM_GITHUB_MODE"
-    )
 
     # --- Git authorship (commits land under YOUR GitHub identity) ---------
     # Every commit in a generated project's workspace is authored with

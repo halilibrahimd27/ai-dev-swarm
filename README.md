@@ -55,8 +55,9 @@ ai-dev-swarm is a 24/7 process on your machine that:
    project or restructures the upcoming work. A cheap
    `AutoSplitPredictor` short-circuits the LLM call when a
    milestone is predicted to blow the budget.
-5. **Ships** finished projects to GitHub as PRs (default) or
-   merges them itself (`AIDEVSWARM_GITHUB_MODE=auto_merge`).
+5. **Ships** each project to its own private GitHub repo — the
+   orchestrator creates the repo on the first build and pushes
+   `main` milestone-by-milestone as the build progresses.
 
 A "project" survives **across days** — token caps pause it
 mid-graph, not mid-milestone, and persistent workspaces +
@@ -152,12 +153,8 @@ Developer/Tester use Opus (expensive).
 orchestrator creates a **private** repo named after the project under
 `GITHUB_OWNER`, wires a credential-less remote, and then **pushes
 `main` after every committed milestone** — so the repo grows in real
-time over the days/weeks the build runs. `AIDEVSWARM_GITHUB_MODE`
-controls the endgame:
-
-- `pr_only` (default) — milestones land on `main`; you review.
-- `auto_merge` — the swarm is trusted to merge its own work. Only flip
-  this once you trust it.
+time over the days/weeks the build runs. The operator reviews on the
+diff; there is no PR / auto-merge mode (the project's repo is yours).
 
 **Commit authorship.** Every commit in a generated repo is stamped with
 your identity, never Claude's (the "Co-Authored-By: Claude" trailer is
@@ -260,7 +257,6 @@ realistically tune:
 | `AIDEVSWARM_IDEATION_MIN_SCORE` | `80` | An idea must score ≥ this (and be novel) to become a project. |
 | `AIDEVSWARM_IDEATION_MAX_ROUNDS` | `5` | If a round produces nothing past the gate, re-ideate up to this many times. |
 | `AIDEVSWARM_SANDBOX_MODE` | `docker` (settings) / `subprocess` (compose) | The CI gate that runs each milestone's generated code. `docker` = ephemeral, **network-less, read-only** container (most isolated; needs the host Docker socket + the `aidevswarm-sandbox` image). `subprocess` = installs the project into a throwaway `uv` venv and runs ruff + mypy + pytest **in the orchestrator container** (real tests, no socket needed; less isolated — this is the **bundled compose default** because the orchestrator has no socket). `inmemory` = CI auto-passes (last resort; quality rests on the Reviewer). See [THREAT_MODEL.md](THREAT_MODEL.md#ci-sandbox-generated-code-gate) for the subprocess trade-off. |
-| `AIDEVSWARM_GITHUB_MODE` | `pr_only` | `pr_only` opens PRs; `auto_merge` lands them. Stay in `pr_only` until you trust the swarm. |
 | `AIDEVSWARM_AUTO_SPLIT_MAX_TURNS` | `30` | Auto-split fires when predicted SDK turns exceed this. |
 | `AIDEVSWARM_AUTO_SPLIT_MAX_COST_USD` | `3.0` | Auto-split fires when predicted milestone cost exceeds this. |
 | `AIDEVSWARM_CONSOLIDATION_EVERY` | `5` | Every Nth success, inject a tidy + verify milestone. |
