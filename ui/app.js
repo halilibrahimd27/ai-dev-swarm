@@ -1,71 +1,82 @@
 // ai-dev-swarm web panel — vanilla JS, no build step, no CDNs.
 //
-// Streams SSE from /sse/projects + /sse/transcript/{id} + /sse/metrics,
-// polls /api/projects + /api/spend, and POSTs operator commands to
-// /api/commands. The transcript renders the agent-to-agent conversation
-// as a readable chat log: streamed llm chunks coalesce into one bubble
-// per agent turn, tool calls render as compact chips, and each role gets
-// a distinct colour so you can follow who is talking.
+// Streams SSE (/sse/projects, /sse/transcript/{id}, /sse/metrics), polls
+// /api/projects, /api/spend, /api/ideas, and POSTs commands to
+// /api/commands. Two views: the live agent transcript (chat style) and
+// the idea-evaluation log (why each idea was accepted/rejected). The
+// right rail shows today + all-time spend, per-role and per-project.
 
 (function () {
   "use strict";
 
   const state = {
     projects: [],
-    selectedProject: null,
+    selected: null,
     transcriptStream: null,
     roleFilter: "",
     autoscroll: true,
-    // The DOM node of the in-progress streamed bubble, so consecutive
-    // llm_chunk events from the same role append instead of spamming.
+    view: "transcript",
     streamingNode: null,
     streamingRole: null,
     knownRoles: new Set(),
+    fails: 0, // consecutive fetch failures, for graceful backoff
+    lastError: "",
   };
 
-  // Kinds that carry conversational text worth a full bubble.
-  const PROSE_KINDS = new Set([
-    "agent_start",
-    "agent_done",
-    "task_start",
-    "task_done",
-    "llm_chunk",
-  ]);
+  const POLL_OK = 5000;
+  const POLL_MAX = 30000;
 
   document.addEventListener("DOMContentLoaded", () => {
-    loadProjects();
-    loadSpend();
-    subscribeProjectsStream();
-    subscribeMetricsStream();
     bindControls();
     bindSteerForm();
-    bindTranscriptToolbar();
-    // SSE may miss the ideation-landed event (the crew runs off-loop),
-    // so poll as a belt-and-braces refresh.
-    setInterval(loadProjects, 5000);
-    setInterval(loadSpend, 7000);
+    bindToolbar();
+    bindTabs();
+    tick();
   });
 
-  // ------------------------------------------------------------------
-  // Projects pane
-  // ------------------------------------------------------------------
+  // One combined poll loop with backoff on failure (no error spam).
+  async function tick() {
+    const ok = await refreshAll();
+    state.fails = ok ? 0 : state.fails + 1;
+    const delay = ok ? POLL_OK : Math.min(POLL_MAX, POLL_OK * Math.pow(2, state.fails));
+    setTimeout(tick, delay);
+  }
 
-  async function loadProjects() {
+  async function refreshAll() {
     try {
-      const res = await fetch("/api/projects");
-      if (!res.ok) throw new Error(`/api/projects: ${res.status}`);
-      state.projects = await res.json();
+      const [projects, spend] = await Promise.all([
+        fetchJson("/api/projects"),
+        fetchJson("/api/spend"),
+      ]);
+      state.projects = projects;
       renderProjects();
-      if (state.selectedProject) loadMilestones(state.selectedProject);
+      renderSpend(spend);
+      if (state.selected) renderDetail(state.selected);
+      if (state.view === "evaluations") await loadIdeas();
+      setStatus("connected");
+      state.lastError = "";
+      return true;
     } catch (err) {
-      log("error loading projects: " + err);
+      setStatus("reconnecting…");
+      logOnce("backend unreachable — retrying (" + err + ")");
+      return false;
     }
   }
+
+  async function fetchJson(url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(url + ": " + res.status);
+    return res.json();
+  }
+
+  // ------------------------------------------------------------------
+  // Projects + detail
+  // ------------------------------------------------------------------
 
   function renderProjects() {
     const ul = document.getElementById("project-list");
     ul.innerHTML = "";
-    if (state.projects.length === 0) {
+    if (!state.projects.length) {
       const li = document.createElement("li");
       li.className = "empty";
       li.textContent = "no projects yet — hit “ideate now”.";
@@ -74,9 +85,7 @@
     }
     for (const p of state.projects) {
       const li = document.createElement("li");
-      li.dataset.id = p.id;
-      li.className = "project-card";
-      if (state.selectedProject === p.id) li.classList.add("active");
+      li.className = "project-card" + (state.selected === p.id ? " active" : "");
       const name = document.createElement("span");
       name.className = "project-name";
       name.textContent = p.name;
@@ -90,11 +99,47 @@
     }
   }
 
-  async function loadMilestones(projectId) {
+  function projectById(id) {
+    return state.projects.find((p) => p.id === id) || null;
+  }
+
+  function selectProject(id) {
+    state.selected = id;
+    state.streamingNode = null;
+    state.streamingRole = null;
+    renderProjects();
+    renderDetail(id);
+    document.getElementById("transcript-empty").hidden = true;
+    document.getElementById("transcript-label").textContent = "(" + id.slice(0, 8) + ")";
+    if (state.transcriptStream) state.transcriptStream.close();
+    document.getElementById("transcript").innerHTML = "";
+    state.transcriptStream = new EventSource("/sse/transcript/" + id);
+    state.transcriptStream.onmessage = appendTranscript;
+  }
+
+  async function renderDetail(id) {
+    const p = projectById(id);
+    const box = document.getElementById("project-detail");
+    if (!p) {
+      box.hidden = true;
+      return;
+    }
+    box.hidden = false;
+    document.getElementById("detail-name").textContent = p.name;
+    const status = document.getElementById("detail-status");
+    status.innerHTML = "";
+    const badge = document.createElement("span");
+    badge.className = "badge state-" + p.state;
+    badge.textContent = p.state.replace(/_/g, " ");
+    status.appendChild(badge);
+    if (p.status_detail) {
+      const why = document.createElement("div");
+      why.className = "why" + (p.state === "blocked" ? " why-blocked" : "");
+      why.textContent = p.status_detail;
+      status.appendChild(why);
+    }
     try {
-      const res = await fetch("/api/projects/" + projectId);
-      if (!res.ok) return;
-      const body = await res.json();
+      const body = await fetchJson("/api/projects/" + id);
       renderMilestones(body.milestones || []);
     } catch (err) {
       /* non-fatal */
@@ -102,17 +147,11 @@
   }
 
   function renderMilestones(milestones) {
-    const wrap = document.getElementById("milestones");
-    const list = document.getElementById("milestone-list");
-    const count = document.getElementById("milestone-count");
+    const list = document.getElementById("detail-ms-list");
+    const count = document.getElementById("detail-ms-count");
     list.innerHTML = "";
-    if (!milestones.length) {
-      wrap.hidden = true;
-      return;
-    }
-    wrap.hidden = false;
     const done = milestones.filter((m) => m.state === "done").length;
-    count.textContent = `(${done}/${milestones.length} done)`;
+    count.textContent = milestones.length ? `(${done}/${milestones.length} done)` : "(none yet)";
     for (const m of milestones) {
       const li = document.createElement("li");
       li.className = "milestone state-" + m.state;
@@ -131,55 +170,8 @@
     }
   }
 
-  function selectProject(projectId) {
-    state.selectedProject = projectId;
-    state.streamingNode = null;
-    state.streamingRole = null;
-    document.getElementById("current-project").textContent =
-      "(" + projectId.slice(0, 8) + ")";
-    document.getElementById("transcript-empty").hidden = true;
-    renderProjects();
-    loadMilestones(projectId);
-    if (state.transcriptStream) state.transcriptStream.close();
-    document.getElementById("transcript").innerHTML = "";
-    state.transcriptStream = new EventSource("/sse/transcript/" + projectId);
-    state.transcriptStream.onmessage = appendTranscript;
-    state.transcriptStream.onerror = () => setStatus("disconnected");
-    setStatus("connected");
-  }
-
   // ------------------------------------------------------------------
-  // SSE: projects topic (state transitions) + metrics topic
-  // ------------------------------------------------------------------
-
-  function subscribeProjectsStream() {
-    const es = new EventSource("/sse/projects");
-    es.onopen = () => setStatus("connected");
-    es.onerror = () => setStatus("disconnected");
-    es.onmessage = () => {
-      // Any project-topic event => refresh the list + spend.
-      loadProjects();
-      loadSpend();
-    };
-  }
-
-  function subscribeMetricsStream() {
-    const es = new EventSource("/sse/metrics");
-    es.onmessage = (e) => {
-      try {
-        const entry = JSON.parse(e.data);
-        if (entry.kind === "llm_done" || entry.kind === "llm_started") {
-          const model = (entry.extra && entry.extra.model) || "";
-          pulseSpendChip(model);
-        }
-      } catch (err) {
-        /* ignore */
-      }
-    };
-  }
-
-  // ------------------------------------------------------------------
-  // Transcript rendering (chat style)
+  // Transcript (chat) — SSE
   // ------------------------------------------------------------------
 
   function appendTranscript(e) {
@@ -187,25 +179,17 @@
     try {
       entry = JSON.parse(e.data);
     } catch (err) {
-      log("transcript parse: " + err);
       return;
     }
     registerRole(entry.role);
-
-    // Coalesce streamed chunks from the same role into one bubble.
     if (entry.kind === "llm_chunk" && state.streamingNode && state.streamingRole === entry.role) {
-      const body = state.streamingNode.querySelector(".msg-body");
-      body.textContent += entry.text || "";
+      state.streamingNode.querySelector(".msg-body").textContent += entry.text || "";
       scrollIfPinned();
       return;
     }
-
     const li = buildMessage(entry);
-    if (state.roleFilter && entry.role && entry.role !== state.roleFilter) {
-      li.hidden = true;
-    }
+    if (state.roleFilter && entry.role && entry.role !== state.roleFilter) li.hidden = true;
     document.getElementById("transcript").appendChild(li);
-
     if (entry.kind === "llm_chunk") {
       state.streamingNode = li;
       state.streamingRole = entry.role;
@@ -221,40 +205,35 @@
     const kind = entry.kind || "msg";
     li.className = "msg kind-" + kind + (entry.role ? " has-role" : "");
     if (entry.role) li.dataset.role = entry.role;
-
     const head = document.createElement("div");
     head.className = "msg-head";
-
     if (entry.role) {
       const chip = document.createElement("span");
-      chip.className = "role-chip role-" + roleClass(entry.role);
+      chip.className = "role-chip role-" + entry.role.replace(/\s+/g, "-");
       chip.textContent = entry.role;
       head.appendChild(chip);
     }
     const badge = document.createElement("span");
     badge.className = "kind-badge";
-    badge.textContent = prettyKind(kind);
+    badge.textContent = kind.replace(/_/g, " ");
     head.appendChild(badge);
-
     const ts = document.createElement("span");
     ts.className = "ts";
     ts.textContent = fmtTime(entry.at);
     head.appendChild(ts);
-
     li.appendChild(head);
-
     const body = document.createElement("div");
     body.className = "msg-body";
     if (kind === "tool_use" || kind === "tool_done") {
-      const chipEl = document.createElement("code");
-      chipEl.className = "tool-chip";
-      chipEl.textContent = "🔧 " + (entry.text || "tool");
-      body.appendChild(chipEl);
+      const chip = document.createElement("code");
+      chip.className = "tool-chip";
+      chip.textContent = "🔧 " + (entry.text || "tool");
+      body.appendChild(chip);
       if (entry.extra && entry.extra.args) {
-        const args = document.createElement("span");
-        args.className = "tool-args";
-        args.textContent = " " + entry.extra.args;
-        body.appendChild(args);
+        const a = document.createElement("span");
+        a.className = "tool-args";
+        a.textContent = " " + entry.extra.args;
+        body.appendChild(a);
       }
     } else {
       body.textContent = entry.text || "";
@@ -266,17 +245,15 @@
   function registerRole(role) {
     if (!role || state.knownRoles.has(role)) return;
     state.knownRoles.add(role);
-    const sel = document.getElementById("role-filter");
     const opt = document.createElement("option");
     opt.value = role;
     opt.textContent = role;
-    sel.appendChild(opt);
+    document.getElementById("role-filter").appendChild(opt);
   }
 
   function applyRoleFilter() {
     document.querySelectorAll("#transcript .msg").forEach((li) => {
-      const role = li.dataset.role || "";
-      li.hidden = state.roleFilter !== "" && role !== state.roleFilter;
+      li.hidden = state.roleFilter !== "" && (li.dataset.role || "") !== state.roleFilter;
     });
   }
 
@@ -287,121 +264,233 @@
   }
 
   // ------------------------------------------------------------------
-  // Spend pane
+  // Idea evaluations
   // ------------------------------------------------------------------
 
-  async function loadSpend() {
+  const CRITERIA = [
+    ["depth_ambition", "depth"],
+    ["usefulness_niche", "useful"],
+    ["novelty", "novelty"],
+    ["decomposability", "decomp"],
+    ["buildability", "build"],
+  ];
+
+  async function loadIdeas() {
+    let ideas;
     try {
-      const res = await fetch("/api/spend");
-      if (!res.ok) return;
-      const s = await res.json();
-      renderSpend(s);
+      ideas = await fetchJson("/api/ideas");
     } catch (err) {
-      /* non-fatal */
+      return;
     }
+    const wrap = document.getElementById("eval-list");
+    wrap.innerHTML = "";
+    if (!ideas.length) {
+      const p = document.createElement("p");
+      p.className = "empty-hint";
+      p.textContent = "No evaluations yet. Hit “ideate now” to score some ideas.";
+      wrap.appendChild(p);
+      return;
+    }
+    for (const ev of ideas) wrap.appendChild(buildEvalCard(ev));
   }
+
+  function buildEvalCard(ev) {
+    const card = document.createElement("div");
+    card.className = "eval-card " + (ev.accepted ? "accepted" : "rejected");
+
+    const head = document.createElement("div");
+    head.className = "eval-head";
+    const title = document.createElement("span");
+    title.className = "eval-title";
+    title.textContent = ev.title;
+    const verdict = document.createElement("span");
+    verdict.className = "eval-verdict " + (ev.accepted ? "v-accepted" : "v-rejected");
+    verdict.textContent = ev.accepted ? "ACCEPTED" : "rejected";
+    const total = document.createElement("span");
+    total.className = "eval-total";
+    total.textContent = ev.total + "/100";
+    head.appendChild(verdict);
+    head.appendChild(title);
+    head.appendChild(total);
+    card.appendChild(head);
+
+    const meta = document.createElement("div");
+    meta.className = "eval-meta";
+    meta.textContent = "round " + ev.round + (ev.novel ? " · novel" : " · not novel");
+    card.appendChild(meta);
+
+    const bars = document.createElement("div");
+    bars.className = "eval-bars";
+    for (const [key, label] of CRITERIA) {
+      const v = (ev.scores && ev.scores[key]) || 0;
+      const row = document.createElement("div");
+      row.className = "bar-row";
+      const lab = document.createElement("span");
+      lab.className = "bar-label";
+      lab.textContent = label;
+      const track = document.createElement("span");
+      track.className = "bar-track";
+      const fill = document.createElement("span");
+      fill.className = "bar-fill";
+      fill.style.width = v + "%";
+      track.appendChild(fill);
+      const num = document.createElement("span");
+      num.className = "bar-num";
+      num.textContent = v;
+      row.appendChild(lab);
+      row.appendChild(track);
+      row.appendChild(num);
+      bars.appendChild(row);
+    }
+    card.appendChild(bars);
+
+    if (ev.summary) {
+      const sm = document.createElement("div");
+      sm.className = "eval-summary";
+      sm.textContent = ev.summary;
+      card.appendChild(sm);
+    }
+    if (ev.rejected_reason) {
+      const rr = document.createElement("div");
+      rr.className = "eval-reason";
+      rr.textContent = "why rejected: " + ev.rejected_reason;
+      card.appendChild(rr);
+    }
+    return card;
+  }
+
+  // ------------------------------------------------------------------
+  // Spend
+  // ------------------------------------------------------------------
 
   function renderSpend(s) {
-    const cost = (s.daily_cost_usd || 0).toFixed(2);
-    const tokens = fmtTokens(s.daily_tokens || 0);
-    document.getElementById("spend-chip").textContent = "$" + cost + " today";
-    document.getElementById("spend-total").textContent = "$" + cost + " · " + tokens + " tokens";
-    const tbody = document.querySelector("#spend-table tbody");
-    tbody.innerHTML = "";
-    for (const row of s.by_role || []) {
+    const today = (s.daily_cost_usd || 0).toFixed(2);
+    const all = (s.all_time_cost_usd || 0).toFixed(2);
+    document.getElementById("spend-today").textContent = "today $" + today;
+    document.getElementById("spend-all").textContent = "all-time $" + all;
+    document.getElementById("spend-today-big").textContent = "$" + today;
+    document.getElementById("spend-all-big").textContent = "$" + all;
+
+    fillSpendRows("spend-role-rows", (s.by_role || []).map((r) => [r.role, r.tokens, r.cost_usd]));
+    fillSpendRows(
+      "spend-project-rows",
+      (s.by_project || []).map((r) => [r.name, r.tokens, r.cost_usd])
+    );
+  }
+
+  function fillSpendRows(tbodyId, rows) {
+    const tb = document.getElementById(tbodyId);
+    tb.innerHTML = "";
+    if (!rows.length) {
       const tr = document.createElement("tr");
-      const r = document.createElement("td");
-      r.className = "sp-role";
-      r.textContent = row.role;
-      const t = document.createElement("td");
-      t.className = "sp-tok";
-      t.textContent = fmtTokens(row.tokens);
+      const td = document.createElement("td");
+      td.className = "sp-empty";
+      td.colSpan = 3;
+      td.textContent = "—";
+      tr.appendChild(td);
+      tb.appendChild(tr);
+      return;
+    }
+    for (const [label, tokens, cost] of rows) {
+      const tr = document.createElement("tr");
+      const a = document.createElement("td");
+      a.className = "sp-role";
+      a.textContent = label;
+      const b = document.createElement("td");
+      b.className = "sp-tok";
+      b.textContent = fmtTokens(tokens);
       const c = document.createElement("td");
       c.className = "sp-cost";
-      c.textContent = "$" + (row.cost_usd || 0).toFixed(2);
-      tr.appendChild(r);
-      tr.appendChild(t);
+      c.textContent = "$" + (cost || 0).toFixed(2);
+      tr.appendChild(a);
+      tr.appendChild(b);
       tr.appendChild(c);
-      tbody.appendChild(tr);
+      tb.appendChild(tr);
     }
   }
 
-  let pulseTimer = null;
-  function pulseSpendChip(model) {
-    const chip = document.getElementById("spend-chip");
-    chip.classList.add("active");
-    if (model) chip.title = "last model: " + model;
-    if (pulseTimer) clearTimeout(pulseTimer);
-    pulseTimer = setTimeout(() => chip.classList.remove("active"), 1500);
+  // ------------------------------------------------------------------
+  // Tabs
+  // ------------------------------------------------------------------
+
+  function bindTabs() {
+    document.querySelectorAll(".tab").forEach((btn) => {
+      btn.addEventListener("click", () => switchView(btn.dataset.view));
+    });
+  }
+
+  function switchView(view) {
+    state.view = view;
+    document.querySelectorAll(".tab").forEach((b) => {
+      b.classList.toggle("active", b.dataset.view === view);
+    });
+    const isT = view === "transcript";
+    document.getElementById("transcript-view").hidden = !isT;
+    document.getElementById("evaluations-view").hidden = isT;
+    document.getElementById("transcript-toolbar").style.visibility = isT ? "visible" : "hidden";
+    if (!isT) loadIdeas();
   }
 
   // ------------------------------------------------------------------
-  // Controls pane
+  // Controls + steering
   // ------------------------------------------------------------------
 
   function bindControls() {
     document.querySelectorAll("button[data-intent]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const intent = btn.dataset.intent;
-        const payload = buildCommandPayload(intent);
+        const payload = buildPayload(intent);
         if (payload === null) return;
-        const isDestructive = btn.classList.contains("danger");
-        if (isDestructive && !window.confirm("confirm " + intent + "?")) return;
-        if (isDestructive) payload.confirmed = true;
+        const destructive = btn.classList.contains("danger");
+        if (destructive && !window.confirm("confirm " + intent + "?")) return;
+        if (destructive) payload.confirmed = true;
         await sendCommand(payload);
       });
     });
   }
 
-  function buildCommandPayload(intent) {
+  function buildPayload(intent) {
     switch (intent) {
       case "ideate_now":
+      case "kill_switch":
         return { intent };
       case "approve":
       case "pause_project":
       case "resume_project":
       case "abort_project":
-        if (!state.selectedProject) {
-          log("select a project first");
-          return null;
-        }
-        return { intent, project_id: state.selectedProject };
+        if (!state.selected) return reqProject();
+        return { intent, project_id: state.selected };
       case "rescope": {
         const scope = document.getElementById("rescope-input").value.trim();
-        if (!state.selectedProject || !scope) {
+        if (!state.selected || !scope) {
           log("select a project + type a new scope");
           return null;
         }
-        return { intent, project_id: state.selectedProject, new_scope: scope };
+        return { intent, project_id: state.selected, new_scope: scope };
       }
-      case "kill_switch":
-        return { intent };
       default:
-        log("unknown intent: " + intent);
         return null;
     }
   }
 
+  function reqProject() {
+    log("select a project first");
+    return null;
+  }
+
   function bindSteerForm() {
-    const form = document.getElementById("steer-form");
-    form.addEventListener("submit", async (e) => {
+    document.getElementById("steer-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const input = document.getElementById("steer-input");
       const body = input.value.trim();
-      if (!body || !state.selectedProject) {
-        log("select a project first to steer it");
-        return;
-      }
-      await sendCommand({
-        intent: "inject_note",
-        project_id: state.selectedProject,
-        body,
-      });
+      if (!body) return;
+      if (!state.selected) return reqProject();
+      await sendCommand({ intent: "inject_note", project_id: state.selected, body });
       input.value = "";
     });
   }
 
-  function bindTranscriptToolbar() {
+  function bindToolbar() {
     document.getElementById("autoscroll").addEventListener("change", (e) => {
       state.autoscroll = e.target.checked;
     });
@@ -412,7 +501,6 @@
     document.getElementById("clear-transcript").addEventListener("click", () => {
       document.getElementById("transcript").innerHTML = "";
       state.streamingNode = null;
-      state.streamingRole = null;
     });
   }
 
@@ -425,6 +513,7 @@
       });
       const body = await res.json();
       log(payload.intent + " → " + (body.detail || JSON.stringify(body)));
+      refreshAll();
     } catch (err) {
       log("command failed: " + err);
     }
@@ -437,27 +526,18 @@
   function setStatus(s) {
     const el = document.getElementById("ws-status");
     el.textContent = s;
-    el.className = "status " + s;
-  }
-
-  function roleClass(role) {
-    return role.replace(/\s+/g, "-");
-  }
-
-  function prettyKind(kind) {
-    return kind.replace(/_/g, " ");
+    el.className = "status " + (s === "connected" ? "connected" : "disconnected");
   }
 
   function fmtTime(iso) {
     if (!iso) return "";
     const d = new Date(iso);
-    if (isNaN(d.getTime())) return "";
-    return d.toTimeString().slice(0, 8);
+    return isNaN(d.getTime()) ? "" : d.toTimeString().slice(0, 8);
   }
 
   function fmtTokens(n) {
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + "M";
-    if (n >= 1_000) return (n / 1_000).toFixed(1) + "k";
+    if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + "k";
     return String(n);
   }
 
@@ -465,5 +545,12 @@
     const out = document.getElementById("result-log");
     const ts = new Date().toISOString().slice(11, 19);
     out.textContent = "[" + ts + "] " + line + "\n" + out.textContent;
+  }
+
+  // Log a repeated condition only once until it changes (no error spam).
+  function logOnce(line) {
+    if (line === state.lastError) return;
+    state.lastError = line;
+    log(line);
   }
 })();

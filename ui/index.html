@@ -13,52 +13,69 @@
     <h1>ai-dev-swarm</h1>
     <span class="tagline">autonomous dev swarm</span>
     <div class="header-right">
-      <span id="spend-chip" class="chip" title="estimated spend today (UTC)">$0.00 today</span>
+      <span class="chip" id="spend-today" title="estimated spend today (UTC)">today $0.00</span>
+      <span class="chip" id="spend-all" title="all-time estimated spend">all-time $0.00</span>
       <span id="ws-status" class="status">connecting…</span>
     </div>
   </header>
 
   <main class="grid">
-    <!-- (a) State pane -->
-    <section id="state-pane" aria-label="Projects + milestones">
+    <!-- (a) Projects + detail -->
+    <section id="state-pane" aria-label="Projects">
       <h2>projects</h2>
       <ul id="project-list" class="project-list"></ul>
-      <div id="milestones" class="milestones" hidden>
-        <h3>milestones <small id="milestone-count"></small></h3>
-        <ol id="milestone-list" class="milestone-list"></ol>
+
+      <div id="project-detail" class="project-detail" hidden>
+        <h3 id="detail-name"></h3>
+        <div id="detail-status" class="detail-status"></div>
+        <div id="detail-spend" class="detail-spend"></div>
+        <div id="detail-milestones">
+          <h4>milestones <small id="detail-ms-count"></small></h4>
+          <ol id="detail-ms-list" class="milestone-list"></ol>
+        </div>
       </div>
     </section>
 
-    <!-- (b) Live transcript pane -->
-    <section id="transcript-pane" aria-label="Live inter-agent transcript">
+    <!-- (b) Transcript / Evaluations -->
+    <section id="center-pane" aria-label="Transcript and evaluations">
       <div class="pane-head">
-        <h2>transcript <small id="current-project">(no project selected)</small></h2>
-        <div class="transcript-toolbar">
+        <div class="tabs">
+          <button id="tab-transcript" class="tab active" data-view="transcript">transcript</button>
+          <button id="tab-evals" class="tab" data-view="evaluations">idea evaluations</button>
+        </div>
+        <div class="transcript-toolbar" id="transcript-toolbar">
           <label class="toggle"><input type="checkbox" id="autoscroll" checked /> autoscroll</label>
-          <select id="role-filter" aria-label="filter by role">
-            <option value="">all roles</option>
-          </select>
+          <select id="role-filter" aria-label="filter by role"><option value="">all roles</option></select>
           <button id="clear-transcript" type="button" class="ghost">clear</button>
         </div>
       </div>
-      <ol id="transcript" class="transcript" aria-live="polite"></ol>
-      <p id="transcript-empty" class="empty-hint">Select a project to watch its agents work in real time.</p>
-      <form id="steer-form" class="steer">
-        <input id="steer-input" type="text" placeholder="steer the agents — drop a note (fire-and-forget)…" autocomplete="off" />
-        <button type="submit">send</button>
-      </form>
+
+      <div id="transcript-view">
+        <span id="transcript-label" class="view-label">(no project selected)</span>
+        <ol id="transcript" class="transcript" aria-live="polite"></ol>
+        <p id="transcript-empty" class="empty-hint">Select a project to watch its agents work in real time.</p>
+        <form id="steer-form" class="steer">
+          <input id="steer-input" type="text" placeholder="steer the agents — drop a note (fire-and-forget)…" autocomplete="off" />
+          <button type="submit">send</button>
+        </form>
+      </div>
+
+      <div id="evaluations-view" hidden>
+        <p class="view-hint">Every idea the Critic scored. An idea must score ≥ the gate AND be novel to become a project.</p>
+        <div id="eval-list" class="eval-list"></div>
+      </div>
     </section>
 
-    <!-- (c) Controls + spend pane -->
+    <!-- (c) Controls + spend -->
     <section id="controls-pane" aria-label="Operator controls">
       <h2>controls</h2>
       <fieldset>
         <legend>start work</legend>
         <button data-intent="ideate_now">ideate now</button>
-        <small>fire the ideation crew; the winner becomes a queued project.</small>
+        <small>fires the ideation crew (up to 5 rounds) until an idea clears the gate.</small>
       </fieldset>
       <fieldset>
-        <legend>this project</legend>
+        <legend>selected project</legend>
         <div class="btn-row">
           <button data-intent="approve">approve</button>
           <button data-intent="pause_project">pause</button>
@@ -76,13 +93,17 @@
         <button data-intent="kill_switch" class="danger">kill switch</button>
       </fieldset>
 
-      <h2 class="spend-title">spend today</h2>
-      <div id="spend-total" class="spend-total">$0.00 · 0 tokens</div>
-      <table id="spend-table" class="spend-table">
-        <tbody></tbody>
-      </table>
+      <h2 class="section-gap">spend</h2>
+      <div class="spend-grid">
+        <div class="spend-cell"><span class="spend-num" id="spend-today-big">$0.00</span><span class="spend-cap">today</span></div>
+        <div class="spend-cell"><span class="spend-num" id="spend-all-big">$0.00</span><span class="spend-cap">all-time</span></div>
+      </div>
+      <h4>by role (today)</h4>
+      <table class="spend-table"><tbody id="spend-role-rows"></tbody></table>
+      <h4>by project (all-time)</h4>
+      <table class="spend-table"><tbody id="spend-project-rows"></tbody></table>
 
-      <h2 class="spend-title">activity</h2>
+      <h2 class="section-gap">activity</h2>
       <pre id="result-log" class="result-log" aria-live="polite"></pre>
     </section>
   </main>
