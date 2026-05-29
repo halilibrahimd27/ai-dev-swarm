@@ -57,14 +57,9 @@ CREATE INDEX IF NOT EXISTS token_log_project_idx ON token_log (project_id);
 -- timestamptz->date cast is not IMMUTABLE.
 CREATE INDEX IF NOT EXISTS token_log_created_idx ON token_log (created_at);
 
--- Idea-level dedup memory (pgvector). 1536 dims = OpenAI / Anthropic
--- v3-text-embedding compatible; adjust if a different model is used.
-CREATE TABLE IF NOT EXISTS idea_embeddings (
-    project_id    uuid        PRIMARY KEY REFERENCES projects (id) ON DELETE CASCADE,
-    embedding     vector(1536) NOT NULL,
-    created_at    timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idea_embeddings_cosine_idx
-    ON idea_embeddings USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 100);
+-- NOTE: idea dedup against the swarm's OWN history is done in-process with
+-- cheap title+summary token similarity (crews.ideation.novelty.SelfHistoryDedup),
+-- not pgvector embeddings. The old `idea_embeddings` table was never
+-- populated and is dropped by alembic migration 0008. The `vector`
+-- extension above is kept only so that migration's downgrade can re-create
+-- the table; nothing in the running system queries it.

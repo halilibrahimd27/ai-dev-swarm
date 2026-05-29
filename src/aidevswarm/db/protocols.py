@@ -49,6 +49,9 @@ class MilestoneRepo(Protocol):
         success: bool,
         commit_hash: str | None,
     ) -> Milestone: ...
+    def reset_retry_count(self, project_id: UUID) -> int:
+        """Zero ``retry_count`` for the project's non-done milestones (resume)."""
+
     def update_spec(self, milestone_id: UUID, patch: dict[str, Any]) -> Milestone:
         """Apply a partial patch to the milestone's spec (Phase 4 Amend)."""
 

@@ -23,7 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from aidevswarm.db.protocols import ProjectRepo
+from aidevswarm.db.protocols import MilestoneRepo, ProjectRepo
 from aidevswarm.db.settings_store import (
     SettingsOverrideRepo,
     apply_override,
@@ -92,6 +92,10 @@ class CommandRouter:
     # the live Settings object. Unset (tests/Phase 5) => a soft error.
     settings: Settings | None = None
     settings_repo: SettingsOverrideRepo | None = None
+    # Wired in the composition root so RESUME can reset a blocked
+    # project's exhausted milestone retry counters. Optional (tests/Phase 5
+    # callers may omit it) — resume still works, it just won't reset counts.
+    milestone_repo: MilestoneRepo | None = None
 
     def __post_init__(self) -> None:
         self._log = get_logger(__name__)
@@ -184,9 +188,17 @@ class CommandRouter:
         # git workspace persist, so it picks up the next pending one.
         project = self.project_repo.get(cmd.project_id)
         if project is not None and project.state is ProjectState.BLOCKED:
+            # Give the failed milestone a fresh set of attempts; otherwise it
+            # keeps its exhausted retry_count and re-blocks on the next
+            # failure, so "resume" would never actually progress.
+            reset = (
+                self.milestone_repo.reset_retry_count(cmd.project_id)
+                if self.milestone_repo is not None
+                else 0
+            )
             self.project_repo.update_state(cmd.project_id, ProjectState.BUILDING)
             self.project_repo.set_status_detail(cmd.project_id, "resumed by operator")
-            self._log.info("router.unblocked", project_id=str(cmd.project_id))
+            self._log.info("router.unblocked", project_id=str(cmd.project_id), retries_reset=reset)
             return CommandResult(ok=True, intent=cmd.intent, detail="resumed from blocked")
         self.project_repo.set_status_detail(cmd.project_id, "resumed by operator")
         self._log.info("router.resumed", project_id=str(cmd.project_id))

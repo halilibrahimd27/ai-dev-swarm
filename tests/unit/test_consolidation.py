@@ -78,6 +78,22 @@ def test_consolidation_then_five_more_triggers_again() -> None:
     assert should_insert_consolidation(milestones, every=5) is True
 
 
+def test_pending_consolidation_blocks_a_second_insert() -> None:
+    """Idempotency: a consolidation already in flight (not DONE) must not
+    trigger another, even when the done-count is on the boundary."""
+    milestones = [_m() for _ in range(5)] + [
+        _m(state=MilestoneState.PENDING, note=CONSOLIDATION_MARKER + " tidy")
+    ]
+    assert should_insert_consolidation(milestones, every=5) is False
+
+
+def test_failed_consolidation_also_blocks_a_second_insert() -> None:
+    milestones = [_m() for _ in range(5)] + [
+        _m(state=MilestoneState.FAILED, note=CONSOLIDATION_MARKER + " tidy")
+    ]
+    assert should_insert_consolidation(milestones, every=5) is False
+
+
 def test_zero_or_negative_every_returns_false() -> None:
     milestones = [_m() for _ in range(10)]
     assert should_insert_consolidation(milestones, every=0) is False

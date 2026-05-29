@@ -16,7 +16,7 @@ from typing import Any
 
 from aidevswarm.api import build_app, run_server
 from aidevswarm.crews import CrewaiBuildCrew, CrewaiIdeationCrew, CrewaiPlanningCrew
-from aidevswarm.crews.ideation.novelty import NoveltyChecker
+from aidevswarm.crews.ideation.novelty import NoveltyChecker, SelfHistoryDedup
 from aidevswarm.crews.replanning import CrewaiReplanningCrew
 from aidevswarm.db.pool import close_pool, open_pool
 from aidevswarm.db.protocols import IdeaEvaluationRepo, ProjectRepo
@@ -50,7 +50,6 @@ from aidevswarm.tools import (
     DockerSandbox,
     GitHubPublisher,
     InMemorySandbox,
-    PgvectorMemory,
     RedisKillSwitch,
     Sandbox,
     SpendRecorder,
@@ -91,7 +90,6 @@ def _build_tick(
     # Spend ledger + budget guard. The recorder writes one token_log
     # row per LLM call (visibility); the guard reads those rows back to
     # pace the day and trip a per-milestone circuit breaker.
-    _ = PgvectorMemory(pool)
     recorder = SpendRecorder(token_repo)
     token_budget = DefaultTokenBudget(settings, token_repo)
 
@@ -104,6 +102,12 @@ def _build_tick(
             settings,
             novelty_checker=NoveltyChecker(
                 github_token=settings.github_token.get_secret_value() or None
+            ),
+            # Self-history dedup (ARCHITECTURE §5.7): reject ideas that
+            # duplicate one of OUR own projects. Reads the live project
+            # list each pass — no embeddings, no pgvector.
+            self_dedup=SelfHistoryDedup(
+                lambda: [(p.spec.title, p.spec.summary) for p in project_repo.list_all()]
             ),
             recorder=recorder,
         ),
@@ -190,6 +194,7 @@ async def _async_main() -> None:
         ideate_runner=lambda: (loop.create_task(_run_ideation_once(tick, idea_repo, log)), None)[1],
         settings=settings,
         settings_repo=settings_override_repo,
+        milestone_repo=milestone_repo,
     )
     api_app = build_app(
         settings=settings,

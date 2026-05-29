@@ -15,7 +15,7 @@ from typing import Any
 from aidevswarm.crews._parsing import keep_known, loads_lenient
 from aidevswarm.crews._prompts import load_prompt
 from aidevswarm.crews._spend import record_crew_spend
-from aidevswarm.crews.ideation.novelty import NoveltyChecker
+from aidevswarm.crews.ideation.novelty import NoveltyChecker, SelfHistoryDedup
 from aidevswarm.logging_config import get_logger
 from aidevswarm.schemas import CriticScores, Idea, ScoredIdea
 from aidevswarm.settings import Settings
@@ -32,11 +32,13 @@ class CrewaiIdeationCrew:
         settings: Settings,
         *,
         novelty_checker: NoveltyChecker | None = None,
+        self_dedup: SelfHistoryDedup | None = None,
         recorder: SpendRecorder | None = None,
     ) -> None:
         self._settings = settings
         self._log = get_logger(__name__)
         self._novelty = novelty_checker
+        self._self_dedup = self_dedup
         self._recorder = recorder
         # Ideation runs BEFORE there's a project, so there's no
         # project-scoped SteeringRepo to pull from. The {{ steering_notes }}
@@ -146,6 +148,8 @@ class CrewaiIdeationCrew:
         parsed = self._parse(result)
         if self._novelty is not None:
             parsed = [self._apply_novelty(s) for s in parsed]
+        if self._self_dedup is not None:
+            parsed = [self._apply_self_dedup(s) for s in parsed]
         self._log.info("ideation.done", count=len(parsed))
         return parsed
 
@@ -168,6 +172,28 @@ class CrewaiIdeationCrew:
                 "total": min(scored.total, 50),
                 "rejected_reason": (
                     f"low novelty (score={report.score:.2f}); matches: {match_summary}"
+                ),
+            }
+        )
+
+    def _apply_self_dedup(self, scored: ScoredIdea) -> ScoredIdea:
+        """Reject ideas that duplicate one of the swarm's OWN projects.
+
+        ARCHITECTURE §5.7: never re-pitch a project we already built.
+        Mirrors :meth:`_apply_novelty` — flips ``novelty`` to 0 and caps
+        ``total`` below the gate with a clear reason.
+        """
+        if self._self_dedup is None:
+            return scored
+        dup = self._self_dedup.find_duplicate(scored.idea)
+        if dup is None:
+            return scored
+        return scored.model_copy(
+            update={
+                "scores": scored.scores.model_copy(update={"novelty": 0}),
+                "total": min(scored.total, 50),
+                "rejected_reason": (
+                    f"duplicate of own project {dup.title!r} (similarity={dup.similarity:.2f})"
                 ),
             }
         )

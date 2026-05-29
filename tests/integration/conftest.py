@@ -41,9 +41,9 @@ _BASE_DB = os.environ.get("AIDEVSWARM_TEST_BASE_DB", "aidevswarm")
 _TEST_DB = os.environ.get("AIDEVSWARM_TEST_PG_DB", f"{_BASE_DB}_test")
 
 # Truncated at session start for a clean slate. ``projects`` cascades to
-# milestones / token_log / idea_embeddings / steering_notes /
-# milestone_sessions; idea_evaluations only SET-NULLs its project_id, so
-# it is truncated explicitly.
+# milestones / token_log / steering_notes / milestone_sessions;
+# idea_evaluations only SET-NULLs its project_id, so it is truncated
+# explicitly.
 _TRUNCATE_SQL = "TRUNCATE projects, idea_evaluations RESTART IDENTITY CASCADE"
 
 

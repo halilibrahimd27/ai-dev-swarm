@@ -15,12 +15,14 @@ from uuid import UUID, uuid4
 from aidevswarm.orchestrator.command_router import CommandRouter
 from aidevswarm.schemas import (
     AbortProject,
+    AcceptanceCriterion,
     Approve,
     DropAndStartNew,
     IdeateNow,
     InjectNote,
     KillSwitch,
     ListState,
+    MilestoneSpec,
     PauseProject,
     Project,
     ProjectSpec,
@@ -33,7 +35,7 @@ from aidevswarm.schemas import (
     TransformProject,
 )
 from aidevswarm.tools.kill_switch import InMemoryKillSwitch
-from tests.fakes import InMemoryProjectRepo
+from tests.fakes import InMemoryMilestoneRepo, InMemoryProjectRepo
 
 
 @dataclass
@@ -141,6 +143,38 @@ def test_resume_unblocks_a_blocked_project_to_building() -> None:
     snapshot = project_repo.get(project.id)
     assert snapshot is not None
     assert snapshot.state is ProjectState.BUILDING
+
+
+def test_resume_resets_failed_milestone_retry_count() -> None:
+    """Resuming a blocked project gives its failed milestone fresh attempts;
+    otherwise it would re-block on the next failure (no real progress)."""
+    project = Project(name="p", spec=_spec(), state=ProjectState.BLOCKED)
+    milestone_repo = InMemoryMilestoneRepo()
+    [m] = milestone_repo.create_many(
+        project.id,
+        [
+            MilestoneSpec(
+                title="m",
+                description="d",
+                acceptance_criteria=[AcceptanceCriterion(description="x", verifier="pytest")],
+            )
+        ],
+    )
+    milestone_repo.record_attempt(m.id, success=False, commit_hash=None)
+    milestone_repo.record_attempt(m.id, success=False, commit_hash=None)
+    assert milestone_repo.rows[m.id].retry_count == 2
+
+    project_repo = InMemoryProjectRepo()
+    project_repo.create(project)
+    router = CommandRouter(
+        project_repo=project_repo,
+        steering_repo=_FakeSteeringRepo(),
+        kill_switch=InMemoryKillSwitch(),
+        milestone_repo=milestone_repo,
+    )
+    result = router.dispatch(ResumeProject(project_id=project.id))
+    assert result.ok
+    assert milestone_repo.rows[m.id].retry_count == 0
 
 
 def test_list_state_and_show_transcript_are_acknowledgements() -> None:

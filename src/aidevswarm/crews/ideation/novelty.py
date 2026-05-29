@@ -17,6 +17,7 @@ integration tests; unit tests use ``respx`` to record fixed responses.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable, Sequence
 
 import httpx
 
@@ -38,6 +39,59 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     intersection = a & b
     union = a | b
     return len(intersection) / len(union)
+
+
+class SelfHistoryDuplicate:
+    """A candidate idea that duplicates one of the swarm's own projects."""
+
+    __slots__ = ("title", "similarity")
+
+    def __init__(self, title: str, similarity: float) -> None:
+        self.title = title
+        self.similarity = similarity
+
+
+class SelfHistoryDedup:
+    """Reject ideas too similar to the swarm's OWN past/in-flight projects.
+
+    ARCHITECTURE §5.7: the swarm must never re-pitch a project it already
+    built. The prior-art :class:`NoveltyChecker` only dedups against the
+    *public world* (GitHub/PyPI); this dedups against *our own* history.
+
+    Deliberately uses the same cheap title+summary token Jaccard as the
+    prior-art checker — no embeddings, no pgvector, no extra dependency.
+    ``history_provider`` returns ``(title, summary)`` pairs for every
+    project the swarm already has (any non-terminal-failed state); it is
+    called fresh on each ``find_duplicate`` so new projects count
+    immediately.
+    """
+
+    def __init__(
+        self,
+        history_provider: Callable[[], Sequence[tuple[str, str]]],
+        *,
+        threshold: float = 0.6,
+    ) -> None:
+        self._history = history_provider
+        self._threshold = threshold
+        self._log = get_logger(__name__)
+
+    def find_duplicate(self, idea: Idea) -> SelfHistoryDuplicate | None:
+        """The closest own-history match at/above threshold, or None."""
+        cand = _tokenise(f"{idea.title} {idea.summary}")
+        if not cand:
+            return None
+        best: SelfHistoryDuplicate | None = None
+        try:
+            history = self._history()
+        except Exception as exc:  # a dedup lookup must never crash ideation
+            self._log.warning("novelty.self_history_failed", error=str(exc))
+            return None
+        for title, summary in history:
+            sim = _jaccard(cand, _tokenise(f"{title} {summary}"))
+            if sim >= self._threshold and (best is None or sim > best.similarity):
+                best = SelfHistoryDuplicate(title=title, similarity=sim)
+        return best
 
 
 class NoveltyChecker:

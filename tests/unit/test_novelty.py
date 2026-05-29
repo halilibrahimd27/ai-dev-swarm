@@ -21,6 +21,7 @@ import respx
 from aidevswarm.crews.ideation.novelty import (
     GITHUB_SEARCH_URL,
     NoveltyChecker,
+    SelfHistoryDedup,
     _jaccard,
     _tokenise,
 )
@@ -29,6 +30,39 @@ from aidevswarm.schemas import Idea
 
 def _idea(title: str, summary: str = "x", rationale: str = "x") -> Idea:
     return Idea(title=title, summary=summary, rationale=rationale)
+
+
+# ---------------------------------------------------------------------------
+# SelfHistoryDedup — reject ideas too close to the swarm's OWN projects
+# ---------------------------------------------------------------------------
+
+
+def test_self_dedup_flags_near_duplicate_of_own_project() -> None:
+    history = [("Living API contract guardian", "mines client AST call sites")]
+    dedup = SelfHistoryDedup(lambda: history, threshold=0.6)
+    dup = dedup.find_duplicate(_idea("Living API contract guardian", "mines client AST call sites"))
+    assert dup is not None
+    assert dup.title == "Living API contract guardian"
+    assert dup.similarity >= 0.6
+
+
+def test_self_dedup_passes_a_distinct_idea() -> None:
+    history = [("Living API contract guardian", "mines client AST call sites")]
+    dedup = SelfHistoryDedup(lambda: history, threshold=0.6)
+    assert dedup.find_duplicate(_idea("Quantum recipe organizer", "stores recipes")) is None
+
+
+def test_self_dedup_empty_history_passes() -> None:
+    dedup = SelfHistoryDedup(lambda: [], threshold=0.6)
+    assert dedup.find_duplicate(_idea("anything", "at all")) is None
+
+
+def test_self_dedup_provider_error_does_not_crash() -> None:
+    def boom() -> list[tuple[str, str]]:
+        raise RuntimeError("db down")
+
+    dedup = SelfHistoryDedup(boom, threshold=0.6)
+    assert dedup.find_duplicate(_idea("x", "y")) is None
 
 
 def test_tokenise_alnum_only() -> None:

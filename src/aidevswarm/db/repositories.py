@@ -257,6 +257,24 @@ class PsycopgMilestoneRepo:
                 raise LookupError(f"milestone {milestone_id} not found")
             return _milestone_from_row(row)
 
+    def reset_retry_count(self, project_id: UUID) -> int:
+        """Zero ``retry_count`` for the project's non-done milestones.
+
+        Used when the operator RESUMES a blocked project: without this the
+        failed milestone keeps its exhausted retry count and re-blocks on
+        the very next failure, so "resume" never actually makes progress.
+        Returns the number of milestones reset.
+        """
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE milestones SET retry_count = 0, updated_at = %s
+                 WHERE project_id = %s AND state <> 'done' AND retry_count > 0
+                """,
+                (utc_now(), str(project_id)),
+            )
+            return cur.rowcount
+
     def update_spec(self, milestone_id: UUID, patch: dict[str, Any]) -> Milestone:
         """Apply ``patch`` to the milestone's spec (Phase 4 Amend).
 

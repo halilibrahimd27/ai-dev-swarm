@@ -9,12 +9,10 @@ from aidevswarm.tools.budget import (
 )
 from aidevswarm.tools.github_tool import GitHubError, GitHubPublisher, NullGitHub
 from aidevswarm.tools.kill_switch import InMemoryKillSwitch, RedisKillSwitch
-from aidevswarm.tools.memory import PgvectorMemory
 from aidevswarm.tools.protocols import (
     CreatedRepo,
     GitHubTool,
     KillSwitch,
-    MemoryStore,
     Sandbox,
     SandboxResult,
     Telegram,
@@ -47,10 +45,8 @@ __all__ = [
     "InMemoryKillSwitch",
     "InMemorySandbox",
     "KillSwitch",
-    "MemoryStore",
     "NullGitHub",
     "NullTelegram",
-    "PgvectorMemory",
     "RedisKillSwitch",
     "Sandbox",
     "SandboxResult",

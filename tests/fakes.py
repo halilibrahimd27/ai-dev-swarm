@@ -9,7 +9,6 @@ each Protocol the Phase 0 orchestrator actually exercises.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4
@@ -153,6 +152,14 @@ class InMemoryMilestoneRepo:
         )
         self.rows[milestone_id] = updated
         return updated
+
+    def reset_retry_count(self, project_id: UUID) -> int:
+        reset = 0
+        for mid, m in list(self.rows.items()):
+            if m.project_id == project_id and m.state is not MilestoneState.DONE and m.retry_count:
+                self.rows[mid] = m.model_copy(update={"retry_count": 0, "updated_at": utc_now()})
+                reset += 1
+        return reset
 
     def update_spec(self, milestone_id: UUID, patch: dict[str, Any]) -> Milestone:
         existing = self.rows[milestone_id]
@@ -427,21 +434,6 @@ class FakeGitHub:
     def open_pr(self, *, repo_url: str, branch: str, title: str, body: str) -> str:
         self.calls.append({"repo_url": repo_url, "branch": branch, "title": title, "body": body})
         return f"https://example.invalid/pr/{len(self.calls)}"
-
-
-@dataclass
-class FakeMemoryStore:
-    """No-op pgvector substitute."""
-
-    seen: list[UUID] = field(default_factory=list)
-
-    def remember(self, project_id: UUID, embedding: Sequence[float]) -> None:
-        del embedding
-        self.seen.append(project_id)
-
-    def is_duplicate(self, embedding: Sequence[float], *, threshold: float = 0.92) -> bool:
-        del embedding, threshold
-        return False
 
 
 @dataclass

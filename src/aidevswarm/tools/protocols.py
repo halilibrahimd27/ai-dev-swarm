@@ -7,7 +7,6 @@ Telegram.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
@@ -48,13 +47,6 @@ class TokenBudget(Protocol):
         output_tokens: int,
         cost_usd: float,
     ) -> None: ...
-
-
-class MemoryStore(Protocol):
-    """pgvector-backed dedup memory for ideas."""
-
-    def remember(self, project_id: UUID, embedding: Sequence[float]) -> None: ...
-    def is_duplicate(self, embedding: Sequence[float], *, threshold: float = 0.92) -> bool: ...
 
 
 class Telegram(Protocol):

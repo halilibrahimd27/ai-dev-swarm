@@ -29,6 +29,12 @@ def should_insert_consolidation(milestones: Sequence[Milestone], *, every: int =
     """
     if every <= 0:
         return False
+    # Idempotency: never queue a second consolidation while one is still
+    # in flight. Without this the boundary count can re-trigger an insert
+    # before the just-added consolidation reaches DONE (the fragility the
+    # audit flagged). One consolidation at a time.
+    if any(_is_consolidation(m) and m.state is not MilestoneState.DONE for m in milestones):
+        return False
     done_since_last_consolidation = 0
     for m in milestones:
         if _is_consolidation(m):
