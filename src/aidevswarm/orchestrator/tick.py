@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from aidevswarm.crews.diagnostician import Diagnostician
 from aidevswarm.crews.finance import FinanceVoice
 from aidevswarm.crews.protocols import BuildCrew, IdeationCrew, PlanningCrew
 from aidevswarm.crews.replanning.protocols import ReplanningCrew
@@ -39,6 +40,7 @@ from aidevswarm.schemas import (
     Amend,
     Escalate,
     Milestone,
+    MilestoneBuildResult,
     MilestoneState,
     Noop,
     Project,
@@ -87,6 +89,9 @@ class TickDeps:
     # Optional Finance/Cost voice that comments on spend in the boardroom
     # after planning + each milestone. None in tests / Phase 0-4.
     finance_voice: FinanceVoice | None = None
+    # Optional Diagnostician: on a milestone quality-failure it analyses the
+    # concrete error and writes a remediation note for the next attempt.
+    diagnostician: Diagnostician | None = None
 
 
 class Tick:
@@ -230,27 +235,7 @@ class Tick:
         )
 
         if not result.success:
-            self._d.milestone_repo.record_attempt(milestone.id, success=False, commit_hash=None)
-            self._log.info(
-                "tick.milestone_failed",
-                project=project.name,
-                milestone=milestone.title,
-                retry_count=milestone.retry_count,
-                reason=result.failure_reason,
-            )
-            if milestone.retry_count + 1 >= self._d.settings.milestone_retry_limit:
-                self._d.telegram.send(
-                    f"[ai-dev-swarm] project '{project.name}' blocked on "
-                    f"milestone '{milestone.title}'."
-                )
-                return self._block(
-                    project,
-                    f"milestone '{milestone.title}' failed "
-                    f"{self._d.settings.milestone_retry_limit}x: "
-                    f"{result.failure_reason or 'unknown'}",
-                )
-            # Retry -> Phase 4 routes through the replanner.
-            return self._move(project, ProjectState.REPLANNING)
+            return self._handle_build_failure(project, milestone, result)
 
         # Success: commit and record.
         if workspace.is_dirty():
@@ -269,6 +254,39 @@ class Tick:
         # Phase 4: route to replanner so it can decide what (if anything)
         # to change about the upcoming milestone, and check the
         # consolidation cadence.
+        return self._move(project, ProjectState.REPLANNING)
+
+    def _handle_build_failure(
+        self, project: Project, milestone: Milestone, result: MilestoneBuildResult
+    ) -> Project | None:
+        """A milestone build failed its quality gate: diagnose, then retry/block."""
+        reason = result.failure_reason or result.summary or "unknown"
+        # Self-healing: analyse the concrete failure so the NEXT attempt is
+        # informed, not blind. Budget-aware — skip when the daily throttle is
+        # spent (don't pay for triage we can't act on).
+        if self._d.diagnostician is not None and self._d.token_budget.can_spend(
+            milestone_id=None, requested=0
+        ):
+            self._d.diagnostician.diagnose(project, milestone, reason)
+        self._d.milestone_repo.record_attempt(milestone.id, success=False, commit_hash=None)
+        self._log.info(
+            "tick.milestone_failed",
+            project=project.name,
+            milestone=milestone.title,
+            retry_count=milestone.retry_count,
+            reason=result.failure_reason,
+        )
+        if milestone.retry_count + 1 >= self._d.settings.milestone_retry_limit:
+            self._d.telegram.send(
+                f"[ai-dev-swarm] project '{project.name}' blocked on "
+                f"milestone '{milestone.title}'."
+            )
+            return self._block(
+                project,
+                f"milestone '{milestone.title}' failed "
+                f"{self._d.settings.milestone_retry_limit}x: {reason}",
+            )
+        # Retry -> Phase 4 routes through the replanner.
         return self._move(project, ProjectState.REPLANNING)
 
     def _replan(self, project: Project) -> Project | None:

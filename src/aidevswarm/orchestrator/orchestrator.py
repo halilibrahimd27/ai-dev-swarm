@@ -16,6 +16,7 @@ from typing import Any
 
 from aidevswarm.api import build_app, run_server
 from aidevswarm.crews import CrewaiBuildCrew, CrewaiIdeationCrew, CrewaiPlanningCrew
+from aidevswarm.crews.diagnostician import Diagnostician
 from aidevswarm.crews.finance import FinanceVoice
 from aidevswarm.crews.ideation.novelty import NoveltyChecker, SelfHistoryDedup
 from aidevswarm.crews.replanning import CrewaiReplanningCrew
@@ -87,6 +88,11 @@ def _build_tick(
     milestone_repo = PsycopgMilestoneRepo(pool)
     token_repo = PsycopgTokenLogRepo(pool)
     session_repo = PsycopgMilestoneSessionRepo(pool)
+    # Steering repo wired into the crews so operator notes — AND the
+    # Diagnostician's remediation notes — actually reach the Developer/Tester
+    # on the next attempt. (Previously only the CommandRouter held one, so
+    # build-time steering never landed.)
+    steering_repo = PsycopgSteeringRepo(pool)
 
     # Spend ledger + budget guard. The recorder writes one token_log
     # row per LLM call (visibility); the guard reads those rows back to
@@ -112,15 +118,20 @@ def _build_tick(
             ),
             recorder=recorder,
         ),
-        planning_crew=CrewaiPlanningCrew(settings, recorder=recorder, transcript=transcript),
+        planning_crew=CrewaiPlanningCrew(
+            settings, steering_repo=steering_repo, recorder=recorder, transcript=transcript
+        ),
         build_crew=CrewaiBuildCrew(
             settings,
             session_repo,
+            steering_repo=steering_repo,
             mcp_servers=load_mcp_servers(),
             recorder=recorder,
             transcript=transcript,
         ),
-        replanning_crew=CrewaiReplanningCrew(settings, recorder=recorder, transcript=transcript),
+        replanning_crew=CrewaiReplanningCrew(
+            settings, steering_repo=steering_repo, recorder=recorder, transcript=transcript
+        ),
         auto_split=AutoSplitPredictor(settings, session_repo),
         workspace_manager=WorkspaceManager(
             settings.workspaces_dir,
@@ -134,6 +145,12 @@ def _build_tick(
         token_budget=token_budget,
         transition_sink=transition_sink,
         finance_voice=FinanceVoice(settings, token_repo, transcript),
+        diagnostician=Diagnostician(
+            settings,
+            steering_repo=steering_repo,
+            transcript=transcript,
+            recorder=recorder,
+        ),
     )
     return Tick(deps)
 
