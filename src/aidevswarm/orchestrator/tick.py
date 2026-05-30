@@ -184,6 +184,15 @@ class Tick:
         return self._move(project, next_state)
 
     def _build_one_milestone(self, project: Project) -> Project | None:
+        # Reclaim any milestone orphaned in BUILDING by a prior attempt that
+        # didn't complete (a transient SDK/API error → pool backoff, or a
+        # mid-build restart). A single worker builds one project at a time, so
+        # at tick entry NOTHING of this project is actively building — any
+        # BUILDING row is an orphan. Without this, next_pending skips it and
+        # picks a DIFFERENT milestone, silently leaving holes in the graph.
+        for m in self._d.milestone_repo.list_for_project(project.id):
+            if m.state is MilestoneState.BUILDING:
+                self._d.milestone_repo.update_state(m.id, MilestoneState.PENDING)
         milestone = self._d.milestone_repo.next_pending(project.id)
         if milestone is None:
             return self._move(project, ProjectState.INTEGRATION)
