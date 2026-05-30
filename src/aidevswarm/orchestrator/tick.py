@@ -358,11 +358,27 @@ class Tick:
         return self._apply_action(project, action)
 
     def _integrate(self, project: Project) -> Project:
+        # Real integration pass (ARCHITECTURE §2): per-milestone CI ran
+        # piecemeal, so run the FULL repo once more as a coherent whole to
+        # catch integration regressions (milestones that passed in isolation
+        # but conflict together) BEFORE declaring the project shipped. Only on
+        # a green full-repo gate do we push the final state + mark DONE.
+        workspace = self._d.workspace_manager.for_project(project.name)
+        ci = self._d.sandbox.run_ci(str(workspace.root))
+        if not ci.passed:
+            reason = (ci.stderr.strip() or ci.stdout.strip())[-300:] or f"exit={ci.exit_code}"
+            self._log.warning(
+                "tick.integration_ci_failed", project=project.name, exit_code=ci.exit_code
+            )
+            self._d.telegram.send(
+                f"[ai-dev-swarm] '{project.name}' failed its final integration CI — needs a look."
+            )
+            return self._block(project, f"integration CI failed: {reason}")
+        self._log.info("tick.integration_ci_passed", project=project.name)
         # The project shipped milestone-by-milestone straight to `main`
-        # (operator's choice), so integration is a final push + notify —
-        # no PR. A late push catches anything an earlier push missed.
+        # (operator's choice); a final push catches anything an earlier one
+        # missed, then notify.
         if project.github_repo:
-            workspace = self._d.workspace_manager.for_project(project.name)
             self._push(project, workspace)
             self._d.telegram.send(
                 f"[ai-dev-swarm] '{project.name}' shipped to {project.github_repo}"
