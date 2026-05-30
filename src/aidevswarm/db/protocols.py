@@ -104,6 +104,10 @@ class TokenLogRepo(Protocol):
         milestones — reflects the CURRENT model tier, so a cost projection
         isn't skewed by earlier (e.g. Opus-era) milestones. 0.0 if none."""
 
+    def daily_cost_series(self, days: int = 14) -> list[tuple[str, float]]:
+        """Per-UTC-day cost for the last ``days`` days as ``(iso_date, cost)``,
+        oldest-first, with zero-filled gaps — for the dashboard sparkline."""
+
 
 class IdeaEvaluationRepo(Protocol):
     """Append + read the Critic's scored-idea verdicts."""

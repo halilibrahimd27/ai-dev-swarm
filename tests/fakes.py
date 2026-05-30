@@ -289,6 +289,14 @@ class InMemoryTokenLogRepo:
         rows.sort(key=lambda x: x[2], reverse=True)
         return rows
 
+    def daily_cost_series(self, days: int = 14) -> list[tuple[str, float]]:
+        # Fake: lump all spend on "today"; zero-fill the rest (tests don't
+        # span days). Shape matches the real repo (oldest-first, len == days).
+        total = sum(r["cost_usd"] for r in self.records)
+        series = [(f"d-{i}", 0.0) for i in range(days - 1)]
+        series.append(("today", round(total, 4)))
+        return series
+
     def recent_milestone_avg_cost(self, project_id: UUID, limit: int = 3) -> float:
         # Fake: average cost per milestone for the project (no recency order —
         # tests insert in order, which is good enough).

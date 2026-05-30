@@ -764,6 +764,71 @@
       "spend-project-rows",
       (s.by_project || []).map((r) => [r.name, r.tokens, r.cost_usd])
     );
+    renderSparkline(s.daily_series || []);
+    renderRoleBars(s.by_role || []);
+  }
+
+  // Inline-SVG sparkline of daily cost (CSP-safe markup, no chart lib/CDN).
+  function renderSparkline(series) {
+    const el = document.getElementById("spend-sparkline");
+    if (!el) return;
+    if (!series.length) {
+      el.innerHTML = '<span class="insight-empty">no spend yet</span>';
+      return;
+    }
+    const w = 280;
+    const h = 64;
+    const pad = 4;
+    const costs = series.map((d) => d.cost || 0);
+    const max = Math.max(...costs, 0.0001);
+    const n = series.length;
+    const x = (i) => pad + (i * (w - 2 * pad)) / Math.max(1, n - 1);
+    const y = (c) => h - pad - (c / max) * (h - 2 * pad);
+    const pts = costs.map((c, i) => x(i).toFixed(1) + "," + y(c).toFixed(1));
+    const line = pts.join(" ");
+    const area = "M" + x(0).toFixed(1) + "," + (h - pad) + " L" + line.replace(/ /g, " L") +
+      " L" + x(n - 1).toFixed(1) + "," + (h - pad) + " Z";
+    const last = costs[n - 1];
+    el.innerHTML =
+      '<svg viewBox="0 0 ' + w + " " + h + '" preserveAspectRatio="none" class="spark-svg">' +
+      '<path class="spark-area" d="' + area + '"/>' +
+      '<polyline class="spark-line" points="' + line + '"/>' +
+      '<circle class="spark-dot" cx="' + x(n - 1).toFixed(1) + '" cy="' + y(last).toFixed(1) + '" r="2.5"/>' +
+      "</svg>" +
+      '<div class="spark-foot"><span>' + series[0].date.slice(5) + "</span><span>$" +
+      last.toFixed(2) + " today</span></div>";
+  }
+
+  // Horizontal CSS bars for today's spend by role.
+  function renderRoleBars(rows) {
+    const el = document.getElementById("role-bars");
+    if (!el) return;
+    el.innerHTML = "";
+    if (!rows.length) {
+      el.innerHTML = '<span class="insight-empty">no spend yet today</span>';
+      return;
+    }
+    const max = Math.max(...rows.map((r) => r.cost_usd || 0), 0.0001);
+    for (const r of rows) {
+      const row = document.createElement("div");
+      row.className = "rb-row";
+      const lab = document.createElement("span");
+      lab.className = "rb-label";
+      lab.textContent = r.role;
+      const track = document.createElement("span");
+      track.className = "rb-track";
+      const fill = document.createElement("span");
+      fill.className = "rb-fill";
+      fill.style.width = Math.max(2, ((r.cost_usd || 0) / max) * 100) + "%";
+      track.appendChild(fill);
+      const val = document.createElement("span");
+      val.className = "rb-val";
+      val.textContent = "$" + (r.cost_usd || 0).toFixed(2);
+      row.appendChild(lab);
+      row.appendChild(track);
+      row.appendChild(val);
+      el.appendChild(row);
+    }
   }
 
   function fillSpendRows(tbodyId, rows) {

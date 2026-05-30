@@ -8,6 +8,7 @@ substitute in-memory fakes in ``tests/fakes.py`` that satisfy the same
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
@@ -549,6 +550,25 @@ class PsycopgTokenLogRepo:
             )
             row = cur.fetchone()
             return float(row[0]) if row else 0.0
+
+    def daily_cost_series(self, days: int = 14) -> list[tuple[str, float]]:
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT created_at::date AS d, COALESCE(SUM(cost_usd), 0)
+                FROM token_log
+                WHERE created_at >= ((now() AT TIME ZONE 'utc')::date - %s::int)
+                GROUP BY d
+                """,
+                (days - 1,),
+            )
+            by_day = {str(r[0]): float(r[1]) for r in cur.fetchall()}
+        today = utc_now().date()
+        series: list[tuple[str, float]] = []
+        for i in range(days - 1, -1, -1):
+            d = (today - timedelta(days=i)).isoformat()
+            series.append((d, round(by_day.get(d, 0.0), 4)))
+        return series
 
 
 def _idea_eval_from_row(row: dict[str, Any]) -> IdeaEvaluation:

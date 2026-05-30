@@ -673,6 +673,111 @@ body {
   gap: 0.8rem;
 }
 
+/* Dashboard insights: spend sparkline + by-role bars (fills the page, adds
+   real data-viz — CSP-safe inline SVG + CSS bars, no chart lib). */
+.insights {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 0.8rem;
+  margin: 0.2rem 0 1rem;
+}
+.insight-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  padding: 0.75rem 0.9rem;
+  box-shadow: var(--shadow);
+  min-height: 120px;
+}
+.insight-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+.insight-title {
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--fg);
+}
+.insight-sub {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.insight-empty {
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+.spark-svg {
+  width: 100%;
+  height: 64px;
+  display: block;
+}
+.spark-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+}
+.spark-area {
+  fill: var(--accent-dim);
+  stroke: none;
+}
+.spark-dot {
+  fill: var(--accent);
+}
+.spark-foot {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.62rem;
+  color: var(--muted);
+  margin-top: 0.3rem;
+  font-variant-numeric: tabular-nums;
+}
+.role-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.rb-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+}
+.rb-label {
+  width: 92px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rb-track {
+  flex: 1;
+  height: 8px;
+  background: var(--bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.rb-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--warn));
+  transition: width 0.3s ease;
+}
+.rb-val {
+  width: 54px;
+  text-align: right;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .insights { grid-template-columns: 1fr; }
+}
+
 /* Cards + panels: consistent radius, calmer borders, subtle hover. */
 .project-card,
 .eval-card,

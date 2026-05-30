@@ -287,6 +287,7 @@ def test_spend_endpoint_without_repo_returns_zeros() -> None:
         "all_time_cost_usd": 0.0,
         "by_role": [],
         "by_project": [],
+        "daily_series": [],
     }
 
 

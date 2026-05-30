@@ -209,6 +209,7 @@ def build_app(
                 "all_time_cost_usd": 0.0,
                 "by_role": [],
                 "by_project": [],
+                "daily_series": [],
             }
         data = await asyncio.to_thread(_collect_spend, token_repo, project_repo)
         return data
@@ -379,6 +380,8 @@ def _collect_spend(token_repo: TokenLogRepo, project_repo: ProjectRepo) -> dict[
             }
             for pid, t, c in by_project
         ],
+        # 14-day daily cost series for the dashboard sparkline.
+        "daily_series": [{"date": d, "cost": c} for d, c in token_repo.daily_cost_series(14)],
     }
 
 
