@@ -245,6 +245,12 @@ class Settings(BaseSettings):
     # it via a <meta> tag injected into index.html at serve time (loopback
     # only), so the operator's own browser can authenticate.
     api_token: SecretStr | None = Field(default=None, validation_alias="AIDEVSWARM_API_TOKEN")
+    # Rate limit for state-changing API requests (POST /api/commands), as a
+    # fixed window per minute. Guards against a runaway script or an
+    # accidental command flood. 0 disables.
+    api_rate_limit_per_min: int = Field(
+        default=60, validation_alias="AIDEVSWARM_API_RATE_LIMIT_PER_MIN"
+    )
     # Comma-separated list in the env var; the field_validator below
     # parses it into list[int]. NoDecode disables pydantic-settings's
     # built-in JSON list decoder so an empty string `""` doesn't error

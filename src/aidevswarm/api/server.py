@@ -32,6 +32,7 @@ import hmac
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
+from time import monotonic
 from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -109,6 +110,20 @@ def build_app(
     )
 
     api_token = settings.api_token.get_secret_value() if settings.api_token else None
+    # Fixed-window rate limiter for mutating requests (in-memory; resets on
+    # restart — fine for a single-operator local system). _rl holds the
+    # current window's [start_monotonic, count].
+    rate_limit = settings.api_rate_limit_per_min
+    _rl: list[float] = [0.0, 0.0]
+
+    def _rate_limited() -> bool:
+        if rate_limit <= 0:
+            return False
+        now = monotonic()
+        if now - _rl[0] >= 60.0:
+            _rl[0], _rl[1] = now, 0.0
+        _rl[1] += 1
+        return _rl[1] > rate_limit
 
     # ------------------------------------------------------------------
     # Auth guard — Origin/CSRF + optional bearer token
@@ -130,6 +145,9 @@ def build_app(
             if origin_host is not None and origin_host not in _LOOPBACK_HOSTS:
                 log.warning("api.cross_origin_refused", origin_host=origin_host)
                 return JSONResponse(status_code=403, content={"detail": "cross-origin refused"})
+            if _rate_limited():
+                log.warning("api.rate_limited", limit_per_min=rate_limit)
+                return JSONResponse(status_code=429, content={"detail": "rate limit exceeded"})
             if api_token is not None:
                 provided = _bearer_token(request.headers.get("authorization"))
                 if provided is None or not hmac.compare_digest(provided, api_token):
@@ -250,6 +268,14 @@ def build_app(
         except ValidationError as exc:
             log.info("api.command_invalid", error=str(exc))
             raise HTTPException(status_code=422, detail=exc.errors()) from exc
+        # Append-only audit trail: one structured (JSON) log line per
+        # operator command — intent + a redacted payload + timestamp.
+        # Durable via the container's log stream; queryable with the log tooling.
+        log.info(
+            "api.command_audit",
+            intent=command.intent,
+            payload=redactor(json.dumps(raw, default=str))[:500],
+        )
         # Dispatch is sync but cheap (one DB write at most).
         return await asyncio.to_thread(router.dispatch, command)
 

@@ -590,6 +590,35 @@ def test_token_required_for_post_when_configured() -> None:
         assert ok.status_code == 200
 
 
+def test_rate_limit_rejects_command_flood() -> None:
+    settings = Settings(
+        AIDEVSWARM_API_HOST="127.0.0.1",
+        AIDEVSWARM_API_PORT=18080,
+        AIDEVSWARM_API_RATE_LIMIT_PER_MIN=3,
+    )
+    project_repo = InMemoryProjectRepo()
+    app = build_app(
+        settings=settings,
+        project_repo=project_repo,
+        milestone_repo=InMemoryMilestoneRepo(),
+        bridge=EventBridge(),
+        router=CommandRouter(
+            project_repo=project_repo,
+            steering_repo=_FakeSteeringRepo(),
+            kill_switch=InMemoryKillSwitch(),
+        ),
+        redactor=SecretRedactor(settings.redact_patterns),
+    )
+    with TestClient(app) as client:
+        codes = [
+            client.post("/api/commands", json={"intent": "list_state"}).status_code
+            for _ in range(5)
+        ]
+    # First 3 allowed, the rest rate-limited (429).
+    assert codes[:3] == [200, 200, 200]
+    assert 429 in codes[3:]
+
+
 def test_get_endpoints_open_even_with_token() -> None:
     app = _build_with_token("s3cret")
     with TestClient(app) as client:
