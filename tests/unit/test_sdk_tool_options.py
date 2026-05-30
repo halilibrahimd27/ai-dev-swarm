@@ -81,6 +81,18 @@ def test_task_prompt_repair_context_targets_ci_errors() -> None:
     assert "F401" in repair
 
 
+def test_task_prompt_resumed_tells_agent_to_continue() -> None:
+    """A re-attempt (resumed session) continues partial work, not restart."""
+    repo = FakeMilestoneSessionRepo()
+    tool = ClaudeAgentSDKDeveloperTool(Settings(), repo)
+    ms = _milestone()
+    fresh = tool.task_prompt(ms, resumed=False)
+    assert "PARTIAL prior attempt" not in fresh
+    resumed = tool.task_prompt(ms, resumed=True)
+    assert "PARTIAL prior attempt" in resumed
+    assert "CONTINUE" in resumed
+
+
 def test_role_model_tiering(tmp_path: Path) -> None:
     """Developer builds on the cheap dev model first, escalates to strong on a
     retry; Tester always runs on the fast model (cost optimisation)."""

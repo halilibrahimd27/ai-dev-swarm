@@ -254,12 +254,22 @@ class ClaudeAgentSDKTool:
         # no pattern means "all tools". (claude-agent-sdk 0.2.87)
         return {"PreToolUse": [HookMatcher(hooks=[_inject])]}  # type: ignore[list-item]
 
-    def task_prompt(self, milestone: Milestone, repair_context: str | None = None) -> str:
+    def task_prompt(
+        self,
+        milestone: Milestone,
+        repair_context: str | None = None,
+        *,
+        resumed: bool = False,
+    ) -> str:
         """The user-facing prompt the SDK receives as the first turn.
 
         When ``repair_context`` is set the CI gate failed on the previous
         attempt; the agent (resumed on its own session) is told to fix
-        exactly those errors rather than re-deriving the milestone.
+        exactly those errors rather than re-deriving the milestone. When
+        ``resumed`` (a prior attempt at THIS milestone exists, e.g. it was
+        paused/interrupted/orphaned), the agent is told to CONTINUE its
+        partial work rather than restart — the mid-milestone-checkpoint
+        behaviour, riding on SDK session-resume + the persistent workspace.
         """
         if repair_context:
             return (
@@ -271,7 +281,15 @@ class ClaudeAgentSDKTool:
                 f"{repair_context}\n\n"
                 f"Milestone for reference: {milestone.title}"
             )
+        prefix = (
+            "You have a PARTIAL prior attempt at this milestone: your session is"
+            " resumed and your earlier work is already on disk. CONTINUE from where"
+            " you left off — inspect what exists first, don't restart from scratch.\n\n"
+            if resumed
+            else ""
+        )
         return (
+            f"{prefix}"
             f"Milestone: {milestone.title}\n"
             f"Acceptance criteria + technical note:\n"
             f"{milestone.spec.model_dump_json(indent=2)}\n\n"
@@ -310,7 +328,9 @@ class ClaudeAgentSDKTool:
 
             final: ResultMessage | None = None
             async with ClaudeSDKClient(options=options) as client:
-                await client.query(self.task_prompt(milestone, repair_context))
+                await client.query(
+                    self.task_prompt(milestone, repair_context, resumed=resume is not None)
+                )
                 async for msg in client.receive_messages():
                     # Stream the agent's turn-by-turn work to the live
                     # transcript (the web UI) as it happens, not just the
