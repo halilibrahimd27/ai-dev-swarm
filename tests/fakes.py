@@ -161,6 +161,16 @@ class InMemoryMilestoneRepo:
                 reset += 1
         return reset
 
+    def requeue_stale_building(self) -> int:
+        requeued = 0
+        for mid, m in list(self.rows.items()):
+            if m.state is MilestoneState.BUILDING:
+                self.rows[mid] = m.model_copy(
+                    update={"state": MilestoneState.PENDING, "updated_at": utc_now()}
+                )
+                requeued += 1
+        return requeued
+
     def update_spec(self, milestone_id: UUID, patch: dict[str, Any]) -> Milestone:
         existing = self.rows[milestone_id]
         new_spec = existing.spec.model_copy(update=patch)

@@ -166,6 +166,27 @@ def test_milestone_update_state_and_record_attempt(
     assert succeeded.retry_count == 1
 
 
+def test_requeue_stale_building_recovers_orphaned_milestone(
+    live_pool: ConnectionPool, project: Project
+) -> None:
+    """A milestone orphaned in `building` (mid-build restart) is requeued."""
+    mrepo = PsycopgMilestoneRepo(live_pool)
+    [a, b] = mrepo.create_many(project.id, [_ms_spec("orphan"), _ms_spec("done-one")])
+    mrepo.update_state(a.id, MilestoneState.BUILDING)  # simulate a crash mid-build
+    mrepo.record_attempt(b.id, success=True, commit_hash="x")  # b is done
+
+    # Before: next_pending skips the orphaned `building` milestone entirely.
+    assert mrepo.next_pending(project.id) is None
+
+    requeued = mrepo.requeue_stale_building()
+    assert requeued >= 1
+
+    # After: the orphan is pending again and gets picked up.
+    nxt = mrepo.next_pending(project.id)
+    assert nxt is not None and nxt.id == a.id
+    assert nxt.state is MilestoneState.PENDING
+
+
 def test_milestone_update_state_unknown_raises(live_pool: ConnectionPool) -> None:
     mrepo = PsycopgMilestoneRepo(live_pool)
     with pytest.raises(LookupError):

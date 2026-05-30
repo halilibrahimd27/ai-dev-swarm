@@ -200,6 +200,13 @@ async def _async_main() -> None:
     )
     project_repo = tick._d.project_repo
     milestone_repo = tick._d.milestone_repo
+    # Crash recovery: a restart mid-build leaves the in-flight milestone
+    # orphaned in `building` (next_pending only sees pending/failed, so it
+    # would be skipped forever). At startup nothing is genuinely mid-build,
+    # so requeue any such row back to `pending` to be re-attempted.
+    requeued = milestone_repo.requeue_stale_building()
+    if requeued:
+        log.info("orchestrator.requeued_stale_building", count=requeued)
     pool_obj = open_pool(settings)  # already opened in _build_tick; reuse
     steering_repo = PsycopgSteeringRepo(pool_obj)
     idea_repo = PsycopgIdeaEvaluationRepo(pool_obj)

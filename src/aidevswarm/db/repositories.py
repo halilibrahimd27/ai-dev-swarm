@@ -257,6 +257,28 @@ class PsycopgMilestoneRepo:
                 raise LookupError(f"milestone {milestone_id} not found")
             return _milestone_from_row(row)
 
+    def requeue_stale_building(self) -> int:
+        """Reset milestones stuck in ``building`` back to ``pending``.
+
+        A milestone is only ``building`` while the single pool worker is
+        actively building it. If the orchestrator crashes / restarts
+        mid-build, that row is orphaned: ``next_pending`` (which matches
+        only pending/failed) skips it forever, so the milestone is never
+        re-attempted and the project sails past it with a permanent hole.
+        Called ONCE at startup — at that point nothing is genuinely
+        mid-build, so every ``building`` row is an orphan. Returns the count
+        requeued.
+        """
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE milestones SET state = 'pending', updated_at = %s
+                 WHERE state = 'building'
+                """,
+                (utc_now(),),
+            )
+            return cur.rowcount
+
     def reset_retry_count(self, project_id: UUID) -> int:
         """Zero ``retry_count`` for the project's non-done milestones.
 

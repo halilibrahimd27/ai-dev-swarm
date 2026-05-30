@@ -52,6 +52,9 @@ class MilestoneRepo(Protocol):
     def reset_retry_count(self, project_id: UUID) -> int:
         """Zero ``retry_count`` for the project's non-done milestones (resume)."""
 
+    def requeue_stale_building(self) -> int:
+        """Reset milestones orphaned in ``building`` (mid-build restart) to pending."""
+
     def update_spec(self, milestone_id: UUID, patch: dict[str, Any]) -> Milestone:
         """Apply a partial patch to the milestone's spec (Phase 4 Amend)."""
 
