@@ -166,6 +166,7 @@ def build_app(
         body: dict[str, Any] = {
             "project": project.model_dump(mode="json"),
             "milestones": [m.model_dump(mode="json") for m in milestones],
+            "spend": await asyncio.to_thread(_project_spend, token_repo, project_id, milestones),
         }
         return body
 
@@ -346,6 +347,29 @@ def _collect_spend(token_repo: TokenLogRepo, project_repo: ProjectRepo) -> dict[
 
 def _collect_ideas(idea_repo: IdeaEvaluationRepo) -> list[dict[str, Any]]:
     return [e.model_dump(mode="json") for e in idea_repo.list_recent(limit=60)]
+
+
+def _project_spend(
+    token_repo: TokenLogRepo | None,
+    project_id: UUID,
+    milestones: list[Milestone],
+) -> dict[str, Any]:
+    """Cost so far + a naive projection to finish (avg done-milestone cost
+    times total). Lets the operator see "spent $X, ~$Y to finish" per project."""
+    total = len(milestones)
+    done = sum(1 for m in milestones if m.state.value == "done")
+    cost_so_far = 0.0
+    if token_repo is not None:
+        cost_so_far = next(
+            (round(c, 2) for pid, _t, c in token_repo.by_project() if pid == project_id), 0.0
+        )
+    projected = round(cost_so_far / done * total, 2) if done else None
+    return {
+        "cost_so_far": cost_so_far,
+        "done": done,
+        "total": total,
+        "projected_total": projected,
+    }
 
 
 def _fetch_project(

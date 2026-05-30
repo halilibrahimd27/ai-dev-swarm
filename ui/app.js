@@ -307,6 +307,16 @@
     try {
       const body = await fetchJson("/api/projects/" + id);
       renderMilestones(body.milestones || []);
+      const sp = body.spend;
+      if (sp && (sp.cost_so_far || sp.projected_total != null)) {
+        const chip = document.createElement("span");
+        chip.className = "spend-chip";
+        const proj =
+          sp.projected_total != null ? " · ~$" + sp.projected_total.toFixed(2) + " projected" : "";
+        chip.textContent = "spent $" + (sp.cost_so_far || 0).toFixed(2) + proj;
+        chip.title = sp.done + "/" + sp.total + " milestones done";
+        status.appendChild(chip);
+      }
     } catch (err) {
       /* non-fatal */
     }

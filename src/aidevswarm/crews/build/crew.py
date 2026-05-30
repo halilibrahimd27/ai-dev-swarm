@@ -94,7 +94,9 @@ class CrewaiBuildCrew:
         if not dev.success:
             return _failure_from_sdk(dev, phase="developer")
 
-        tester = self._tester_tool.run_sync(milestone, workspace)
+        tester = self._tester_tool.run_sync(
+            milestone, workspace, max_turns=self._settings.tester_max_turns
+        )
         if not tester.success:
             return _failure_from_sdk(tester, phase="tester")
 

@@ -509,3 +509,14 @@ h2, h3, h4 { font-family: var(--font-sans); }
   background: linear-gradient(180deg, rgba(224, 169, 58, 0.08), var(--panel));
 }
 .decision.is-finance .decision-role { color: var(--warn); }
+
+/* Per-project spend + projection chip in the project bar. */
+.spend-chip {
+  font-size: 0.72rem;
+  color: var(--warn);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.08rem 0.5rem;
+  background: var(--panel-2);
+  white-space: nowrap;
+}

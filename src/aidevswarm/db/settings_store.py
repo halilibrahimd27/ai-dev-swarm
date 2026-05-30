@@ -159,6 +159,14 @@ EDITABLE_SETTINGS: tuple[EditableSetting, ...] = (
         minimum=0,
         help="On a CI failure, re-invoke the Developer with the exact errors and re-run CI up to this many times before the milestone counts a failed attempt. 0 disables.",
     ),
+    EditableSetting(
+        "tester_max_turns",
+        "Tester max turns",
+        "Build",
+        "int",
+        minimum=1,
+        help="Turn cap for the Tester (lower than the build cap — testing is more bounded). Trims recurring Tester spend.",
+    ),
 )
 
 _BY_KEY: dict[str, EditableSetting] = {s.key: s for s in EDITABLE_SETTINGS}

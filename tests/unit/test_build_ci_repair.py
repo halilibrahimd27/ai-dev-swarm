@@ -115,6 +115,14 @@ def test_repair_disabled_when_attempts_zero() -> None:
     crew._dev_tool.run_sync.assert_called_once()  # never re-invoked
 
 
+def test_tester_runs_with_its_own_turn_cap() -> None:
+    crew = _crew()
+    _run(crew, _Sandbox(fail_times=0))  # passes immediately
+    # The Tester is invoked with the (lower) tester_max_turns cap, not the
+    # Developer's default — the recurring Tester cost saver.
+    assert crew._tester_tool.run_sync.call_args.kwargs["max_turns"] == 40
+
+
 def test_repair_context_keeps_error_tail() -> None:
     ci = SandboxRun(passed=False, stdout="x" * 5000, stderr="ERR", exit_code=1)
     ctx = _ci_repair_context(ci, limit=100)

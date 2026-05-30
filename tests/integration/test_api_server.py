@@ -143,6 +143,46 @@ def test_get_one_project_returns_milestones() -> None:
     assert len(body["milestones"]) == 2
 
 
+def test_project_spend_projection_in_detail() -> None:
+    from uuid import uuid4 as _uuid4
+
+    from aidevswarm.api.server import _project_spend
+    from aidevswarm.schemas import AcceptanceCriterion, Milestone, MilestoneSpec, MilestoneState
+    from tests.fakes import InMemoryTokenLogRepo
+
+    pid = _uuid4()
+    repo = InMemoryTokenLogRepo()
+    repo.record(
+        project_id=pid,
+        milestone_id=_uuid4(),
+        role="Developer",
+        model="m",
+        input_tokens=1000,
+        output_tokens=0,
+        cost_usd=4.0,
+    )
+
+    def _ms(state: MilestoneState) -> Milestone:
+        return Milestone(
+            project_id=pid,
+            ordinal=0,
+            title="m",
+            state=state,
+            spec=MilestoneSpec(
+                title="m",
+                description="d",
+                acceptance_criteria=[AcceptanceCriterion(description="x", verifier="pytest")],
+            ),
+        )
+
+    ms = [_ms(MilestoneState.DONE), _ms(MilestoneState.PENDING)]  # 1 of 2 done, $4 so far
+    spend = _project_spend(repo, pid, ms)
+    assert spend["cost_so_far"] == 4.0
+    assert spend["done"] == 1
+    assert spend["total"] == 2
+    assert spend["projected_total"] == 8.0  # 4.0/1 * 2
+
+
 def test_get_unknown_project_404s() -> None:
     app, *_ = _build()
     with TestClient(app) as client:

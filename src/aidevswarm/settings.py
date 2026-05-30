@@ -164,6 +164,10 @@ class Settings(BaseSettings):
     # aborts at the budget cap regardless.
     sdk_max_turns: int = Field(default=80, validation_alias="AIDEVSWARM_SDK_MAX_TURNS")
     sdk_max_budget_usd: float = Field(default=5.0, validation_alias="AIDEVSWARM_SDK_MAX_BUDGET_USD")
+    # The Tester's turn cap. Testing is more bounded than building, so a
+    # lower cap than sdk_max_turns trims the recurring per-milestone Tester
+    # spend (it ran to ~2.3M tokens on the first project) without starving it.
+    tester_max_turns: int = Field(default=40, validation_alias="AIDEVSWARM_TESTER_MAX_TURNS")
     # When the CI gate fails, re-invoke the Developer with the exact
     # lint/type/test errors and re-run CI, up to this many times, BEFORE
     # the milestone counts a failed attempt. A trivial fix (an unused
