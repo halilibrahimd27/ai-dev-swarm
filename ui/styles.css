@@ -520,3 +520,126 @@ h2, h3, h4 { font-family: var(--font-sans); }
   background: var(--panel-2);
   white-space: nowrap;
 }
+
+/* ===================================================== corporate console v3 */
+/* A calmer, more "enterprise ops console" pass: deeper neutral surfaces, a
+   single restrained accent, crisper separators, accent-rail nav + cards,
+   tighter typographic hierarchy. Token overrides (later :root wins). */
+:root {
+  --bg: #0b0f17;
+  --bg-2: #0e131c;
+  --panel: #141b26;
+  --panel-2: #1a2230;
+  --border: #283142;
+  --border-soft: #1c2431;
+  --fg: #eef2f8;
+  --muted: #94a1b2;
+  --accent: #6aa8ff;
+  --accent-dim: rgba(106, 168, 255, 0.13);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.28);
+  --radius: 10px;
+}
+
+body {
+  /* Replace the single glow with a subtler, more corporate ambient. */
+  background:
+    radial-gradient(900px 480px at 88% -12%, rgba(106, 168, 255, 0.05), transparent 62%),
+    var(--bg);
+}
+
+/* Topbar: solid, crisp, with a thin accent underline. */
+.topbar {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+}
+.logo {
+  letter-spacing: -0.01em;
+}
+.chip {
+  background: var(--bg-2);
+  border-color: var(--border);
+}
+
+/* Nav: an accent rail on the active item — the enterprise-console tell. */
+.sidenav {
+  background: var(--bg-2);
+  border-right: 1px solid var(--border);
+  padding-top: 0.4rem;
+}
+.navitem {
+  border-radius: 7px;
+  border-left: 2px solid transparent;
+  font-weight: 500;
+}
+.navitem.active {
+  background: var(--accent-dim);
+  border-color: transparent;
+  border-left: 2px solid var(--accent);
+  color: var(--fg);
+}
+.navitem.active .nav-ic {
+  color: var(--accent);
+  opacity: 1;
+}
+
+/* KPI stat cards: accent rail + stronger number hierarchy. */
+.stat {
+  position: relative;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  transition: border-color 0.15s, transform 0.15s;
+}
+.stat::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--accent);
+  opacity: 0.7;
+}
+.stat:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+}
+.stat-num {
+  font-size: 1.55rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.stat-cap {
+  font-size: 0.62rem;
+  letter-spacing: 0.09em;
+}
+
+/* Cards + panels: consistent radius, calmer borders, subtle hover. */
+.project-card,
+.eval-card,
+.decision,
+.new-project {
+  border-radius: var(--radius);
+}
+.project-card:hover {
+  transform: translateY(-1px);
+}
+
+/* View headings: clearer, more deliberate hierarchy. */
+.view-head h2 {
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* Buttons: flatter, more corporate; accent on primary hover. */
+button {
+  border-radius: 7px;
+  font-weight: 500;
+}
+.global-actions button[data-intent="kill_switch"],
+button.danger {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+}
