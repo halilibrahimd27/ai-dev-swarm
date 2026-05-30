@@ -583,12 +583,16 @@ body {
   opacity: 1;
 }
 
-/* KPI stat cards: accent rail + stronger number hierarchy. */
+/* KPI stat cards: icon + value + label, accent rail, semantic tints. */
 .stat {
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
   border-radius: var(--radius);
-  background: var(--panel);
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
   border: 1px solid var(--border);
+  padding: 0.7rem 0.9rem;
   overflow: hidden;
   transition: border-color 0.15s, transform 0.15s;
 }
@@ -599,21 +603,74 @@ body {
   top: 0;
   bottom: 0;
   width: 3px;
-  background: var(--accent);
-  opacity: 0.7;
+  background: var(--muted);
+  opacity: 0.6;
 }
+.stat-accent::before { background: var(--ok); opacity: 0.9; }
+.stat-money::before { background: var(--warn); opacity: 0.9; }
+.stat-danger::before { background: var(--danger); opacity: 0.9; }
 .stat:hover {
   transform: translateY(-1px);
   border-color: var(--accent);
 }
+.stat-ic {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+.stat-accent .stat-ic { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, var(--border)); }
+.stat-money .stat-ic { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, var(--border)); }
+.stat-danger .stat-ic { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
+.stat-body { display: flex; flex-direction: column; gap: 0.05rem; min-width: 0; }
 .stat-num {
-  font-size: 1.55rem;
+  font-size: 1.5rem;
   font-weight: 700;
   letter-spacing: -0.02em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
 }
+.stat-money .stat-num { color: var(--warn); }
 .stat-cap {
-  font-size: 0.62rem;
-  letter-spacing: 0.09em;
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Section bar above the project grid. */
+.section-bar {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin: 0.4rem 0 0.6rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border-soft);
+}
+.section-title {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--fg);
+  text-transform: none;
+}
+.section-hint {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+/* Roomier project cards in a comfortable grid. */
+.project-list {
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 0.8rem;
 }
 
 /* Cards + panels: consistent radius, calmer borders, subtle hover. */

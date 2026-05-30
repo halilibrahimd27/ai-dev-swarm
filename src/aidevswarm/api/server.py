@@ -234,13 +234,17 @@ def build_app(
         return snapshot(settings)
 
     @app.get("/api/transcript/{project_id}")
-    async def transcript_history(project_id: UUID) -> list[dict[str, Any]]:
-        """Persisted transcript for a project — replayed on UI load so the
-        conversation survives refreshes (the SSE stream only carries NEW
-        entries). Each entry is redacted exactly like the SSE path."""
+    async def transcript_history(project_id: UUID, limit: int = 400) -> list[dict[str, Any]]:
+        """Persisted transcript (most-recent ``limit`` entries, chronological)
+        replayed on UI load. Capped so a long project's thousands of entries
+        don't freeze the page; the live SSE stream carries new ones. Each
+        entry is redacted exactly like the SSE path."""
         if transcript_repo is None:
             return []
-        entries = await asyncio.to_thread(transcript_repo.list_for_project, project_id)
+        capped = max(1, min(limit, 2000))
+        entries = await asyncio.to_thread(
+            lambda: transcript_repo.list_for_project(project_id, limit=capped)
+        )
         return [json.loads(redactor(e.model_dump_json())) for e in entries]
 
     @app.get("/api/boardroom/{project_id}")

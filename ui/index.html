@@ -45,11 +45,11 @@
         </div>
 
         <div class="stat-row" id="dashboard-stats" aria-label="At-a-glance">
-          <div class="stat"><span class="stat-num" id="stat-total">0</span><span class="stat-cap">projects</span></div>
-          <div class="stat"><span class="stat-num" id="stat-active">0</span><span class="stat-cap">in flight</span></div>
-          <div class="stat"><span class="stat-num" id="stat-await">0</span><span class="stat-cap">awaiting approval</span></div>
-          <div class="stat"><span class="stat-num" id="stat-blocked">0</span><span class="stat-cap">blocked</span></div>
-          <div class="stat"><span class="stat-num" id="stat-spend-today">$0</span><span class="stat-cap">today</span></div>
+          <div class="stat"><span class="stat-ic">▦</span><div class="stat-body"><span class="stat-num" id="stat-total">0</span><span class="stat-cap">projects</span></div></div>
+          <div class="stat stat-accent"><span class="stat-ic">⚡</span><div class="stat-body"><span class="stat-num" id="stat-active">0</span><span class="stat-cap">in flight</span></div></div>
+          <div class="stat"><span class="stat-ic">⏳</span><div class="stat-body"><span class="stat-num" id="stat-await">0</span><span class="stat-cap">awaiting approval</span></div></div>
+          <div class="stat stat-danger" id="stat-blocked-card"><span class="stat-ic">■</span><div class="stat-body"><span class="stat-num" id="stat-blocked">0</span><span class="stat-cap">blocked</span></div></div>
+          <div class="stat stat-money"><span class="stat-ic">$</span><div class="stat-body"><span class="stat-num" id="stat-spend-today">$0</span><span class="stat-cap">today</span></div></div>
         </div>
 
         <form class="new-project" id="new-project-form" hidden>
@@ -68,7 +68,7 @@
           </div>
         </form>
 
-        <p class="view-hint">Pick a project to watch its agents work. “ideate now” fires the ideation crew until an idea clears the gate; “new project” lets you hand-author one.</p>
+        <div class="section-bar"><h3 class="section-title">Projects</h3><span class="section-hint">pick one to watch its agents work · “ideate now” finds an idea · “new project” hand-authors one</span></div>
         <ul id="project-list" class="project-list"></ul>
       </section>
 

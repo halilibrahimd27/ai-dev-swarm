@@ -35,6 +35,7 @@
     streamingRole: null,
     knownRoles: new Set(),
     seenIds: new Set(),
+    seenBoardroom: new Set(),
     settingsLoaded: false,
     fails: 0,
     lastError: "",
@@ -304,6 +305,7 @@
     state.streamingNode = null;
     state.streamingRole = null;
     state.seenIds = new Set();
+    state.seenBoardroom = new Set();
     renderProjects();
     renderProjectBar(id);
     document.getElementById("transcript-empty").hidden = true;
@@ -311,19 +313,28 @@
     document.getElementById("transcript").innerHTML = "";
     document.getElementById("boardroom-stream").innerHTML = "";
     updateBoardroomChrome();
-    // 1) Replay persisted history (decisions are routed to the Boardroom by
-    //    renderEntry), so both views are populated immediately on open.
+    // 1) Boardroom history from its OWN (small, decisions-only) endpoint — so
+    //    it's complete + instant regardless of transcript size.
     try {
-      const history = await fetchJson("/api/transcript/" + id);
+      const decisions = await fetchJson("/api/boardroom/" + id);
       if (state.selected !== id) return;
-      for (const entry of history) renderEntry(entry);
+      for (const d of decisions) renderBoardroomEntry(d);
+    } catch (err) {
+      /* non-fatal */
+    }
+    // 2) Transcript history — CAPPED to the recent tail so a long project
+    //    doesn't freeze the page. Rendered transcript-only (boardroom already
+    //    loaded above).
+    try {
+      const history = await fetchJson("/api/transcript/" + id + "?limit=400");
+      if (state.selected !== id) return;
+      for (const entry of history) renderEntry(entry, { boardroom: false });
     } catch (err) {
       /* non-fatal */
     }
     if (state.selected !== id) return;
-    // 2) Attach the live stream for NEW entries (de-duped by id) — open as
-    //    soon as a project is selected so live decisions reach the Boardroom
-    //    even when the Transcript tab was never visited.
+    // 3) Live stream for NEW entries (de-duped) — decisions also fan to the
+    //    Boardroom live.
     state.transcriptStream = new EventSource("/sse/transcript/" + id);
     state.transcriptStream.onmessage = appendTranscript;
   }
@@ -408,15 +419,16 @@
     renderEntry(entry);
   }
 
-  function renderEntry(entry) {
+  function renderEntry(entry, opts) {
     if (entry.id) {
       if (state.seenIds.has(entry.id)) return;
       state.seenIds.add(entry.id);
     }
     registerRole(entry.role);
-    // Boardroom: high-level decisions get their own curated stream (they
-    // ALSO appear in the raw transcript below).
-    if (entry.kind === "decision") {
+    // Boardroom: decisions also fan to the curated stream — but only for live
+    // entries; history replay loads the boardroom from its own endpoint, so
+    // skip routing during replay (opts.boardroom === false) to avoid doubles.
+    if (entry.kind === "decision" && (!opts || opts.boardroom !== false)) {
       renderBoardroomEntry(entry);
     }
     if (entry.kind === "llm_chunk" && state.streamingNode && state.streamingRole === entry.role) {
@@ -444,6 +456,10 @@
   function renderBoardroomEntry(entry) {
     const stream = document.getElementById("boardroom-stream");
     if (!stream) return;
+    if (entry.id) {
+      if (state.seenBoardroom.has(entry.id)) return;
+      state.seenBoardroom.add(entry.id);
+    }
     const role = entry.role || "Team";
     const li = document.createElement("li");
     li.className = "decision role-" + role + (role === "Finance" ? " is-finance" : "");
