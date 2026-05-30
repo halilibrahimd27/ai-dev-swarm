@@ -145,6 +145,7 @@ def _build_tick(
         token_budget=token_budget,
         transition_sink=transition_sink,
         finance_voice=FinanceVoice(settings, token_repo, transcript),
+        token_log=token_repo,
         diagnostician=Diagnostician(
             settings,
             steering_repo=steering_repo,

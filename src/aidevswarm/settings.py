@@ -191,6 +191,18 @@ class Settings(BaseSettings):
     # Consolidation cadence (Phase 4). Every Nth completed milestone is
     # followed by a no-features-allowed "tidy + verify" milestone.
     consolidation_every: int = Field(default=5, validation_alias="AIDEVSWARM_CONSOLIDATION_EVERY")
+    # Drift / scope guardrail. A long-running project can sprawl (the
+    # milestone graph grows as the replanner splits work) and quietly burn
+    # money. If a project exceeds either cap it is BLOCKED for a one-time
+    # operator review (resume to continue, or rescope/abort). 0 disables a
+    # cap. max_project_cost_usd defaults to 0 (off) since the daily budget
+    # already paces spend; set it to hard-stop a runaway project.
+    max_project_milestones: int = Field(
+        default=25, validation_alias="AIDEVSWARM_MAX_PROJECT_MILESTONES"
+    )
+    max_project_cost_usd: float = Field(
+        default=0.0, validation_alias="AIDEVSWARM_MAX_PROJECT_COST_USD"
+    )
 
     # --- Workspace --------------------------------------------------------
     workspaces_dir: Path = Field(

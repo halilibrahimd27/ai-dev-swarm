@@ -136,6 +136,22 @@ EDITABLE_SETTINGS: tuple[EditableSetting, ...] = (
         help="Every Nth completed milestone is followed by a tidy + verify milestone.",
     ),
     EditableSetting(
+        "max_project_milestones",
+        "Max milestones / project",
+        "Replanner",
+        "int",
+        minimum=0,
+        help="Drift guard: block a project for review if its milestone graph grows past this. 0 disables.",
+    ),
+    EditableSetting(
+        "max_project_cost_usd",
+        "Max cost / project ($)",
+        "Budget & throttle",
+        "float",
+        minimum=0,
+        help="Hard-stop a project for review once its total spend exceeds this. 0 disables (daily budget still paces).",
+    ),
+    EditableSetting(
         "sdk_max_turns",
         "SDK max turns",
         "Build",

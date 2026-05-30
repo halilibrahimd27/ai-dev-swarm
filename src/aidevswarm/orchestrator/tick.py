@@ -24,7 +24,7 @@ from aidevswarm.crews.diagnostician import Diagnostician
 from aidevswarm.crews.finance import FinanceVoice
 from aidevswarm.crews.protocols import BuildCrew, IdeationCrew, PlanningCrew
 from aidevswarm.crews.replanning.protocols import ReplanningCrew
-from aidevswarm.db.protocols import MilestoneRepo, ProjectRepo
+from aidevswarm.db.protocols import MilestoneRepo, ProjectRepo, TokenLogRepo
 from aidevswarm.db.sessions import MilestoneSessionRepo
 from aidevswarm.logging_config import get_logger
 from aidevswarm.orchestrator.auto_split import AutoSplitPredictor
@@ -92,6 +92,8 @@ class TickDeps:
     # Optional Diagnostician: on a milestone quality-failure it analyses the
     # concrete error and writes a remediation note for the next attempt.
     diagnostician: Diagnostician | None = None
+    # Optional spend ledger for the drift/scope guardrail (per-project cost).
+    token_log: TokenLogRepo | None = None
 
 
 class Tick:
@@ -190,9 +192,9 @@ class Tick:
         # at tick entry NOTHING of this project is actively building — any
         # BUILDING row is an orphan. Without this, next_pending skips it and
         # picks a DIFFERENT milestone, silently leaving holes in the graph.
-        for m in self._d.milestone_repo.list_for_project(project.id):
-            if m.state is MilestoneState.BUILDING:
-                self._d.milestone_repo.update_state(m.id, MilestoneState.PENDING)
+        drift = self._reclaim_and_guard(project)
+        if drift is not None:
+            return drift
         milestone = self._d.milestone_repo.next_pending(project.id)
         if milestone is None:
             return self._move(project, ProjectState.INTEGRATION)
@@ -264,6 +266,53 @@ class Tick:
         # to change about the upcoming milestone, and check the
         # consolidation cadence.
         return self._move(project, ProjectState.REPLANNING)
+
+    def _reclaim_and_guard(self, project: Project) -> Project | None:
+        """Reclaim orphaned BUILDING milestones, then apply the scope guard.
+
+        Returns a BLOCKED project if the scope/cost cap is exceeded, else None.
+        """
+        milestones = self._d.milestone_repo.list_for_project(project.id)
+        for m in milestones:
+            if m.state is MilestoneState.BUILDING:
+                self._d.milestone_repo.update_state(m.id, MilestoneState.PENDING)
+        return self._scope_guard(project, milestones)
+
+    def _scope_guard(self, project: Project, milestones: list[Milestone]) -> Project | None:
+        """Block a project that has drifted past its scope/cost caps.
+
+        Returns the BLOCKED project (with a review reason) when a cap is
+        exceeded, else None. Caught at the top of the build step so it fires
+        before starting the next milestone; resume continues, rescope/abort
+        are the other operator options. 0 = cap disabled.
+        """
+        max_ms = self._d.settings.max_project_milestones
+        if max_ms > 0 and len(milestones) > max_ms:
+            self._d.telegram.send(
+                f"[ai-dev-swarm] '{project.name}' hit the milestone scope cap "
+                f"({len(milestones)}/{max_ms}) — review."
+            )
+            return self._block(
+                project,
+                f"scope guardrail: {len(milestones)} milestones exceeds the cap "
+                f"of {max_ms} — resume to continue, or rescope/abort.",
+            )
+        max_cost = self._d.settings.max_project_cost_usd
+        if max_cost > 0 and self._d.token_log is not None:
+            cost = next(
+                (c for pid, _t, c in self._d.token_log.by_project() if pid == project.id), 0.0
+            )
+            if cost > max_cost:
+                self._d.telegram.send(
+                    f"[ai-dev-swarm] '{project.name}' hit the cost cap "
+                    f"(${cost:.2f}/${max_cost:.0f}) — review."
+                )
+                return self._block(
+                    project,
+                    f"scope guardrail: ${cost:.2f} exceeds the cost cap of "
+                    f"${max_cost:.0f} — resume to continue, or rescope/abort.",
+                )
+        return None
 
     def _handle_build_failure(
         self, project: Project, milestone: Milestone, result: MilestoneBuildResult
