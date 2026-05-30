@@ -110,8 +110,14 @@ class NoveltyChecker:
         self._log = get_logger(__name__)
 
     def check(self, idea: Idea) -> NoveltyReport:
-        """Score ``idea`` against GitHub + PyPI prior art."""
-        idea_tokens = _tokenise(idea.title)
+        """Score ``idea`` against GitHub + PyPI prior art.
+
+        Compares the idea's title AND summary tokens (not just the title)
+        against each candidate's name AND description, so a project that does
+        the same thing under a different name is still caught — less brittle
+        than a pure title match, without needing embeddings.
+        """
+        idea_tokens = _tokenise(f"{idea.title} {idea.summary}")
         matches = list(self._github_matches(idea_tokens, idea.title))
         matches.extend(self._pypi_matches(idea_tokens, idea.title))
         matches.sort(key=lambda m: m.similarity, reverse=True)
@@ -137,7 +143,12 @@ class NoveltyChecker:
                 source="github",
                 url=str(item.get("html_url", "")),
                 title=str(item.get("full_name", "")),
-                similarity=_jaccard(idea_tokens, _tokenise(str(item.get("full_name", "")))),
+                # Compare against name + description so a similarly-purposed
+                # repo with a different name still scores as a match.
+                similarity=_jaccard(
+                    idea_tokens,
+                    _tokenise(f"{item.get('full_name', '')} {item.get('description') or ''}"),
+                ),
             )
             for item in items[: self._max_matches]
         ]

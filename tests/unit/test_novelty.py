@@ -76,6 +76,37 @@ def test_jaccard_overlap() -> None:
 
 
 @respx.mock
+def test_similar_purpose_different_name_is_caught_via_description() -> None:
+    """A repo whose NAME shares no tokens with the idea title, but whose
+    DESCRIPTION matches the idea summary, is now flagged (title-only would
+    have missed it)."""
+    respx.get(GITHUB_SEARCH_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "html_url": "https://github.com/x/zephyr",
+                        "full_name": "x/zephyr",  # no overlap with the title tokens
+                        "description": "reverse engineer api contracts from client repos "
+                        "by static analysis and replay recorded traffic",
+                    }
+                ]
+            },
+        )
+    )
+    respx.get(url__regex=r"https://pypi\.org/.*").mock(return_value=httpx.Response(404))
+    idea = _idea(
+        "Quux",  # title shares nothing with "zephyr"
+        summary="reverse engineer api contracts from client repos by static "
+        "analysis and replay recorded traffic",
+    )
+    report = NoveltyChecker().check(idea)
+    assert not report.is_novel  # caught via name+description vs title+summary
+    assert report.top_matches and report.top_matches[0].similarity > 0.4
+
+
+@respx.mock
 def test_known_clone_scores_below_threshold() -> None:
     """The "yet another todo app" idea must be rejected by the Critic."""
     respx.get(GITHUB_SEARCH_URL).mock(
