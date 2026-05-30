@@ -76,9 +76,17 @@
       <section class="view" id="view-boardroom" hidden>
         <div class="view-head">
           <h2>Boardroom</h2>
-          <div id="boardroom-project" class="boardroom-project"></div>
+          <div class="boardroom-head-right">
+            <div id="boardroom-project" class="boardroom-project"></div>
+            <div class="boardroom-actions" id="boardroom-actions" hidden>
+              <button data-intent="approve">approve plan</button>
+              <button data-intent="pause_project">pause</button>
+              <button data-intent="resume_project">resume</button>
+              <button data-intent="abort_project" class="danger">abort</button>
+            </div>
+          </div>
         </div>
-        <p class="view-hint">The company meeting: the swarm's senior staff — PM, Architect, Reviewer and the Finance officer — talk through the key calls on this project. High-signal decisions only, not the line-by-line work (that's the Transcript). Drop in to steer them.</p>
+        <p class="view-hint">The company meeting: the swarm's senior staff — PM, Architect, Reviewer and the Finance officer — talk through the key calls on this project. High-signal decisions only, not the line-by-line work (that's the Transcript). Drop in to steer them, reply to a voice, or act on the plan.</p>
         <ol id="boardroom-stream" class="boardroom-stream" aria-live="polite"></ol>
         <p id="boardroom-empty" class="empty-hint">Select a project from the Dashboard to sit in on its boardroom.</p>
         <form id="boardroom-form" class="steer">

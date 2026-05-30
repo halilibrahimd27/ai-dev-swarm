@@ -709,3 +709,39 @@ button.danger {
   font-size: 0.68rem;
   color: var(--accent);
 }
+
+/* Boardroom: header actions + per-card reply. */
+.boardroom-head-right {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+.boardroom-actions {
+  display: flex;
+  gap: 0.3rem;
+}
+.boardroom-actions[hidden] {
+  display: none;
+}
+.decision {
+  position: relative;
+}
+.decision-reply {
+  position: absolute;
+  right: 0.6rem;
+  bottom: 0.5rem;
+  font-size: 0.64rem;
+  padding: 0.05rem 0.4rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.decision:hover .decision-reply {
+  opacity: 1;
+}
+.decision-reply:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}

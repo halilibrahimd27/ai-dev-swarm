@@ -122,10 +122,17 @@
     const label = document.getElementById("boardroom-project");
     const empty = document.getElementById("boardroom-empty");
     const form = document.getElementById("boardroom-form");
+    const actions = document.getElementById("boardroom-actions");
     if (label) label.textContent = p ? p.name : "";
     const has = Boolean(p);
     if (empty) empty.hidden = has;
     if (form) form.hidden = !has;
+    if (actions) {
+      actions.hidden = !has;
+      // "approve plan" only makes sense while awaiting approval.
+      const approve = actions.querySelector('[data-intent="approve"]');
+      if (approve) approve.style.display = p && p.state === "awaiting_approval" ? "" : "none";
+    }
   }
 
   function go(name) {
@@ -455,6 +462,20 @@
     body.textContent = entry.text || "";
     li.appendChild(head);
     li.appendChild(body);
+    // Reply: pre-fill the speak box addressed to this voice (still routes
+    // through inject_note → an Operator decision the agents read as steering).
+    if (role !== "Operator") {
+      const reply = document.createElement("button");
+      reply.className = "decision-reply";
+      reply.type = "button";
+      reply.textContent = "reply";
+      reply.addEventListener("click", () => {
+        const input = document.getElementById("boardroom-input");
+        input.value = "@" + role + " ";
+        input.focus();
+      });
+      li.appendChild(reply);
+    }
     stream.appendChild(li);
     if (state.route === "boardroom" && state.autoscroll) {
       stream.scrollTop = stream.scrollHeight;
