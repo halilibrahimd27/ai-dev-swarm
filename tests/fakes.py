@@ -289,6 +289,16 @@ class InMemoryTokenLogRepo:
         rows.sort(key=lambda x: x[2], reverse=True)
         return rows
 
+    def recent_milestone_avg_cost(self, project_id: UUID, limit: int = 3) -> float:
+        # Fake: average cost per milestone for the project (no recency order —
+        # tests insert in order, which is good enough).
+        per: dict[UUID, float] = {}
+        for r in self.records:
+            if r["project_id"] == project_id and r["milestone_id"] is not None:
+                per[r["milestone_id"]] = per.get(r["milestone_id"], 0.0) + r["cost_usd"]
+        costs = list(per.values())[-limit:]
+        return sum(costs) / len(costs) if costs else 0.0
+
 
 @dataclass
 class InMemoryIdeaEvaluationRepo:

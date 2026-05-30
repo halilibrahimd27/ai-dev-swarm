@@ -532,6 +532,24 @@ class PsycopgTokenLogRepo:
             )
             return [(r[0], int(r[1]), float(r[2])) for r in cur.fetchall()]
 
+    def recent_milestone_avg_cost(self, project_id: UUID, limit: int = 3) -> float:
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(AVG(mcost), 0) FROM (
+                    SELECT milestone_id, SUM(cost_usd) AS mcost, MAX(created_at) AS last
+                    FROM token_log
+                    WHERE project_id = %s AND milestone_id IS NOT NULL
+                    GROUP BY milestone_id
+                    ORDER BY last DESC
+                    LIMIT %s
+                ) recent
+                """,
+                (str(project_id), limit),
+            )
+            row = cur.fetchone()
+            return float(row[0]) if row else 0.0
+
 
 def _idea_eval_from_row(row: dict[str, Any]) -> IdeaEvaluation:
     return IdeaEvaluation(

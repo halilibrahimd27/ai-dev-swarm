@@ -99,6 +99,11 @@ class TokenLogRepo(Protocol):
         """All-time spend grouped by project: ``(project_id, tokens, cost)``
         rows (project-scoped only), most-expensive first."""
 
+    def recent_milestone_avg_cost(self, project_id: UUID, limit: int = 3) -> float:
+        """Average total cost of the project's ``limit`` most-recent
+        milestones — reflects the CURRENT model tier, so a cost projection
+        isn't skewed by earlier (e.g. Opus-era) milestones. 0.0 if none."""
+
 
 class IdeaEvaluationRepo(Protocol):
     """Append + read the Critic's scored-idea verdicts."""

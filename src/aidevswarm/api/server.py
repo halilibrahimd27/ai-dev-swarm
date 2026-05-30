@@ -394,11 +394,22 @@ def _project_spend(
     total = len(milestones)
     done = sum(1 for m in milestones if m.state.value == "done")
     cost_so_far = 0.0
+    recent_avg = 0.0
     if token_repo is not None:
         cost_so_far = next(
             (round(c, 2) for pid, _t, c in token_repo.by_project() if pid == project_id), 0.0
         )
-    projected = round(cost_so_far / done * total, 2) if done else None
+        recent_avg = token_repo.recent_milestone_avg_cost(project_id)
+    # Project the REMAINING milestones at the recent per-milestone cost (which
+    # reflects the current model tier), so the estimate isn't skewed by
+    # earlier, pricier milestones. Fall back to the all-history average.
+    remaining = max(0, total - done)
+    if recent_avg > 0:
+        projected: float | None = round(cost_so_far + remaining * recent_avg, 2)
+    elif done:
+        projected = round(cost_so_far / done * total, 2)
+    else:
+        projected = None
     return {
         "cost_so_far": cost_so_far,
         "done": done,
