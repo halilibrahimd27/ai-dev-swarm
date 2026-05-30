@@ -82,22 +82,29 @@ def test_task_prompt_repair_context_targets_ci_errors() -> None:
 
 
 def test_role_model_tiering(tmp_path: Path) -> None:
-    """Developer runs on the strong model; Tester on the cheap one (ARCH §7)."""
+    """Developer builds on the cheap dev model first, escalates to strong on a
+    retry; Tester always runs on the fast model (cost optimisation)."""
     settings = Settings(
         AIDEVSWARM_MODEL_STRONG="anthropic/claude-opus-4-7",
         AIDEVSWARM_MODEL_FAST="anthropic/claude-haiku-4-5",
+        AIDEVSWARM_MODEL_DEV="anthropic/claude-sonnet-4-6",
     )
     repo = FakeMilestoneSessionRepo()
-    ms = _milestone()
+    ms = _milestone()  # retry_count == 0 (first attempt)
     ws = Workspace(tmp_path / "ws")
     ws.init()
     dev = ClaudeAgentSDKDeveloperTool(settings, repo)
     tester = ClaudeAgentSDKTesterTool(settings, repo)
     dev_opts = dev.build_options(ms, ws, max_turns=10, max_budget_usd=1.0, resume=None)
     tester_opts = tester.build_options(ms, ws, max_turns=10, max_budget_usd=1.0, resume=None)
-    # The SDK/CLI gets a BARE model id — the LiteLLM "anthropic/" prefix is stripped.
-    assert dev_opts.model == "claude-opus-4-7"
+    # SDK/CLI gets a BARE model id — the LiteLLM "anthropic/" prefix is stripped.
+    assert dev_opts.model == "claude-sonnet-4-6"  # cheap first attempt
     assert tester_opts.model == "claude-haiku-4-5"
+
+    # A retried milestone escalates the Developer to the strong model.
+    retried = ms.model_copy(update={"retry_count": 1})
+    escalated = dev.build_options(retried, ws, max_turns=10, max_budget_usd=1.0, resume=None)
+    assert escalated.model == "claude-opus-4-7"
 
 
 def test_build_options_disables_claude_co_author(tmp_path: Path) -> None:

@@ -88,11 +88,15 @@ class ClaudeAgentSDKTool:
     allowed_tools: ClassVar[tuple[str, ...]] = ()
     _template_name: ClassVar[str] = ""
 
-    # Model tier: "strong" (Opus, default) or "fast" (Haiku). Per
-    # ARCHITECTURE §7 the cheap model handles testing, the strong model
-    # does the building. Subclasses override; resolved against Settings
-    # in :meth:`_model` so the operator can repoint either tier via env.
+    # Model tier: "strong" (Opus), "dev" (Sonnet, escalates to strong on a
+    # retry — see ``escalate_on_retry``), or "fast" (Haiku). Resolved against
+    # Settings in :meth:`_model` so the operator can repoint any tier via env.
     model_tier: ClassVar[str] = "strong"
+    # When True, a milestone that has already FAILED (retry_count > 0) is built
+    # with the strong model instead of the tier default — cheap first try,
+    # strong horsepower only when a milestone proves hard. The Developer sets
+    # this; the Tester does not.
+    escalate_on_retry: ClassVar[bool] = False
 
     # Defaults; per-call override via run_sync(max_turns=..., max_budget_usd=...).
     default_max_turns: ClassVar[int] = 40
@@ -147,17 +151,27 @@ class ClaudeAgentSDKTool:
             )
         )
 
-    def _model(self) -> str:
+    def _model(self, milestone: Milestone) -> str:
         """Resolve this role's model from its tier (see :attr:`model_tier`).
 
-        The Claude Code CLI (which the SDK drives) wants a BARE model id
-        like ``claude-opus-4-7``; the ``anthropic/`` prefix is only for
-        LiteLLM (the CrewAI path) and the CLI rejects it ("model may not
-        exist"). Strip any ``provider/`` prefix here.
+        The Developer (``escalate_on_retry``) builds on the cheap ``dev`` tier
+        for a first attempt and escalates to ``strong`` once a milestone has
+        failed (``retry_count > 0``) — most spend is here, so keeping easy
+        milestones on Sonnet and reserving Opus for hard ones is the headline
+        cost saver.
+
+        The Claude Code CLI (which the SDK drives) wants a BARE model id like
+        ``claude-opus-4-7``; the ``anthropic/`` prefix is only for LiteLLM
+        (the CrewAI path) and the CLI rejects it. Strip any ``provider/`` prefix.
         """
-        raw = (
-            self._settings.model_fast if self.model_tier == "fast" else self._settings.model_strong
-        )
+        if self.escalate_on_retry and milestone.retry_count > 0:
+            raw = self._settings.model_strong
+        elif self.model_tier == "fast":
+            raw = self._settings.model_fast
+        elif self.model_tier == "dev":
+            raw = self._settings.model_dev
+        else:
+            raw = self._settings.model_strong
         return raw.split("/", 1)[-1]
 
     # ------------------------------------------------------------------
@@ -189,7 +203,7 @@ class ClaudeAgentSDKTool:
             max_turns=max_turns,
             max_budget_usd=max_budget_usd,
             resume=resume,
-            model=self._model(),
+            model=self._model(milestone),
             mcp_servers=dict(self._mcp_servers),
             hooks=self._build_hooks(milestone.project_id),
             # Commits in the generated repo must carry ONLY the operator's
@@ -290,7 +304,7 @@ class ClaudeAgentSDKTool:
             span.set_attribute("aidevswarm.project_id", str(milestone.project_id))
             span.set_attribute("aidevswarm.milestone_id", str(milestone.id))
             span.set_attribute("aidevswarm.role", self.role)
-            span.set_attribute("aidevswarm.model", self._model())
+            span.set_attribute("aidevswarm.model", self._model(milestone))
             if resume is not None:
                 span.set_attribute("aidevswarm.resume_session_id", resume)
 
@@ -357,7 +371,7 @@ class ClaudeAgentSDKTool:
             project_id=milestone.project_id,
             milestone_id=milestone.id,
             role=self.role,
-            model=self._model(),
+            model=self._model(milestone),
             prompt_tokens=prompt_tokens,
             completion_tokens=int(usage.get("output_tokens", 0) or 0),
             cost_usd=float(final.total_cost_usd or 0.0),
@@ -438,9 +452,16 @@ class ClaudeAgentSDKTool:
 
 
 class ClaudeAgentSDKDeveloperTool(ClaudeAgentSDKTool):
-    """Developer role: writes the actual milestone code."""
+    """Developer role: writes the actual milestone code.
+
+    Builds on the cheap ``dev`` model (Sonnet) by default and escalates to
+    the strong model (Opus) only on a retry — the headline cost saver, since
+    the Developer is ~83% of spend.
+    """
 
     role = "Developer"
+    model_tier = "dev"
+    escalate_on_retry = True
     allowed_tools = ("Read", "Write", "Edit", "Glob", "Grep", "Bash")
     _template_name = "developer"
 

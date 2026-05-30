@@ -48,6 +48,15 @@ class Settings(BaseSettings):
         default="anthropic/claude-haiku-4-5",
         validation_alias="AIDEVSWARM_MODEL_FAST",
     )
+    # The Developer's DEFAULT model. Building is ~83% of spend and Opus is
+    # ~5x Sonnet, so the Developer runs on Sonnet for the first attempt at a
+    # milestone and only ESCALATES to model_strong (Opus) on a retry (when a
+    # milestone failed and needs more horsepower). Easy milestones stay cheap;
+    # hard ones get the strong model. Repoint via AIDEVSWARM_MODEL_DEV.
+    model_dev: str = Field(
+        default="anthropic/claude-sonnet-4-6",
+        validation_alias="AIDEVSWARM_MODEL_DEV",
+    )
     # Max output tokens for the CrewAI JSON-emitting agents (PM/Architect,
     # Ideator/Critic, Reviewer, Replanner). CrewAI's default is low enough
     # that a full milestone-graph JSON gets truncated mid-string and fails
