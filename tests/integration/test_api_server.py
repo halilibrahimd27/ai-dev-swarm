@@ -183,6 +183,30 @@ def test_project_spend_projection_in_detail() -> None:
     assert spend["projected_total"] == 8.0  # 4.0/1 * 2
 
 
+def test_dashboard_returns_enriched_cards() -> None:
+    app, project_repo, milestone_repo, *_ = _build()
+    project = project_repo.create(Project(name="alpha", spec=_spec()))
+    milestone_repo.create_many(
+        project.id,
+        [
+            MilestoneSpec(
+                title=f"m{i}",
+                description="d",
+                acceptance_criteria=[AcceptanceCriterion(description="ok", verifier="pytest")],
+            )
+            for i in range(3)
+        ],
+    )
+    with TestClient(app) as client:
+        body = client.get("/api/dashboard").json()
+    assert len(body["projects"]) == 1
+    card = body["projects"][0]
+    assert card["name"] == "alpha"
+    assert card["total"] == 3
+    assert card["done"] == 0
+    assert "cost" in card and "state" in card
+
+
 def test_get_unknown_project_404s() -> None:
     app, *_ = _build()
     with TestClient(app) as client:

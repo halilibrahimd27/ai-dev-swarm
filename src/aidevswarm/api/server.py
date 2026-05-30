@@ -156,6 +156,13 @@ def build_app(
         # stays responsive under DB latency.
         return await asyncio.to_thread(_collect_projects, project_repo)
 
+    @app.get("/api/dashboard")
+    async def dashboard() -> dict[str, Any]:
+        """Enriched project cards for the Dashboard in one call: each project
+        with its milestone progress (done/total) + spend so far, so the cards
+        can show a progress bar + cost without N per-project fetches."""
+        return await asyncio.to_thread(_collect_dashboard, project_repo, milestone_repo, token_repo)
+
     @app.get("/api/projects/{project_id}")
     async def get_project(project_id: UUID) -> dict[str, Any]:
         project, milestones = await asyncio.to_thread(
@@ -347,6 +354,34 @@ def _collect_spend(token_repo: TokenLogRepo, project_repo: ProjectRepo) -> dict[
 
 def _collect_ideas(idea_repo: IdeaEvaluationRepo) -> list[dict[str, Any]]:
     return [e.model_dump(mode="json") for e in idea_repo.list_recent(limit=60)]
+
+
+def _collect_dashboard(
+    project_repo: ProjectRepo,
+    milestone_repo: MilestoneRepo,
+    token_repo: TokenLogRepo | None,
+) -> dict[str, Any]:
+    """Project cards enriched with milestone progress + cost for the Dashboard."""
+    cost_by: dict[UUID, float] = {}
+    if token_repo is not None:
+        cost_by = {pid: c for pid, _t, c in token_repo.by_project()}
+    cards: list[dict[str, Any]] = []
+    for p in project_repo.list_all():
+        ms = milestone_repo.list_for_project(p.id)
+        done = sum(1 for m in ms if m.state.value == "done")
+        cards.append(
+            {
+                "id": str(p.id),
+                "name": p.name,
+                "state": p.state.value,
+                "status_detail": p.status_detail,
+                "github_repo": p.github_repo,
+                "done": done,
+                "total": len(ms),
+                "cost": round(cost_by.get(p.id, 0.0), 2),
+            }
+        )
+    return {"projects": cards}
 
 
 def _project_spend(

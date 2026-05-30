@@ -145,11 +145,13 @@
 
   async function refreshAll() {
     try {
-      const [projects, spend] = await Promise.all([
-        fetchJson("/api/projects"),
+      const [dash, spend] = await Promise.all([
+        fetchJson("/api/dashboard"),
         fetchJson("/api/spend"),
       ]);
-      state.projects = projects;
+      // Dashboard items are enriched projects (done/total/cost) — richer than
+      // /api/projects, and carry everything the rest of the UI reads.
+      state.projects = dash.projects || [];
       renderProjects();
       renderSpend(spend);
       if (state.selected) renderProjectBar(state.selected);
@@ -210,7 +212,7 @@
 
   function buildProjectCard(p) {
     const li = document.createElement("li");
-    li.className = "project-card" + (state.selected === p.id ? " active" : "");
+    li.className = "project-card state-rail-" + p.state + (state.selected === p.id ? " active" : "");
     const top = document.createElement("div");
     top.className = "pc-top";
     const name = document.createElement("span");
@@ -222,6 +224,42 @@
     top.appendChild(name);
     top.appendChild(badge);
     li.appendChild(top);
+
+    // Milestone progress bar (done / total).
+    if (p.total) {
+      const pct = Math.round((p.done / p.total) * 100);
+      const prog = document.createElement("div");
+      prog.className = "pc-progress";
+      const track = document.createElement("div");
+      track.className = "pc-track";
+      const fill = document.createElement("span");
+      fill.className = "pc-fill";
+      fill.style.width = pct + "%";
+      track.appendChild(fill);
+      const label = document.createElement("span");
+      label.className = "pc-prog-label";
+      label.textContent = p.done + "/" + p.total;
+      prog.appendChild(track);
+      prog.appendChild(label);
+      li.appendChild(prog);
+    }
+
+    // Footer: cost + (optional) repo link hint.
+    const foot = document.createElement("div");
+    foot.className = "pc-foot";
+    const cost = document.createElement("span");
+    cost.className = "pc-cost";
+    cost.textContent = "$" + (p.cost || 0).toFixed(2);
+    foot.appendChild(cost);
+    if (p.github_repo) {
+      const repo = document.createElement("span");
+      repo.className = "pc-repo";
+      repo.textContent = "↗ repo";
+      repo.title = p.github_repo;
+      foot.appendChild(repo);
+    }
+    li.appendChild(foot);
+
     if (p.status_detail) {
       const why = document.createElement("div");
       why.className = "why" + (p.state === "blocked" ? " why-blocked" : "");
