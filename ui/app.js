@@ -70,8 +70,21 @@
     bindNewProjectForm();
     window.addEventListener("hashchange", () => route(currentHashRoute()));
     route(currentHashRoute());
+    restoreSelectedProject();
     tick();
   });
+
+  // Re-open the last-selected project after a refresh so the Transcript +
+  // Boardroom aren't empty until you re-pick from the Dashboard.
+  function restoreSelectedProject() {
+    let id = null;
+    try {
+      id = localStorage.getItem("selectedProject");
+    } catch (e) {
+      /* storage disabled */
+    }
+    if (id) openProject(id);
+  }
 
   // ------------------------------------------------------------------
   // Routing
@@ -227,22 +240,34 @@
   // Project selection → Transcript view
   // ------------------------------------------------------------------
 
+  // Dashboard click: open the project AND jump to its Transcript.
   async function selectProject(id) {
+    go("transcript");
+    await openProject(id);
+  }
+
+  // Open a project's live stream + replayed history (Transcript + Boardroom),
+  // WITHOUT changing the route. Persisted so a refresh restores it — fixes the
+  // Boardroom being empty on refresh / first open and decisions arriving late.
+  async function openProject(id) {
     state.selected = id;
+    try {
+      localStorage.setItem("selectedProject", id);
+    } catch (e) {
+      /* private mode / storage disabled — non-fatal */
+    }
     state.streamingNode = null;
     state.streamingRole = null;
     state.seenIds = new Set();
     renderProjects();
     renderProjectBar(id);
-    go("transcript");
     document.getElementById("transcript-empty").hidden = true;
     if (state.transcriptStream) state.transcriptStream.close();
-    const list = document.getElementById("transcript");
-    list.innerHTML = "";
+    document.getElementById("transcript").innerHTML = "";
     document.getElementById("boardroom-stream").innerHTML = "";
     updateBoardroomChrome();
-    // 1) Replay persisted history so a refresh shows the whole project.
-    //    Decision entries are also routed into the boardroom by renderEntry.
+    // 1) Replay persisted history (decisions are routed to the Boardroom by
+    //    renderEntry), so both views are populated immediately on open.
     try {
       const history = await fetchJson("/api/transcript/" + id);
       if (state.selected !== id) return;
@@ -251,7 +276,9 @@
       /* non-fatal */
     }
     if (state.selected !== id) return;
-    // 2) Attach the live stream for NEW entries (de-duped by id).
+    // 2) Attach the live stream for NEW entries (de-duped by id) — open as
+    //    soon as a project is selected so live decisions reach the Boardroom
+    //    even when the Transcript tab was never visited.
     state.transcriptStream = new EventSource("/sse/transcript/" + id);
     state.transcriptStream.onmessage = appendTranscript;
   }
