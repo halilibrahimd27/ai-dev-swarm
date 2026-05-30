@@ -128,6 +128,16 @@ def test_source_dirs_falls_back_to_dot(tmp_path: Path) -> None:
     assert _source_dirs(tmp_path) == ["."]
 
 
+def test_gate_steps_include_security_scan(tmp_path: Path) -> None:
+    """Generated code clears ruff + mypy + a HIGH-severity bandit scan + pytest."""
+    (tmp_path / "src").mkdir()
+    steps = SubprocessSandbox()._gate_steps(tmp_path, tmp_path / "bin")
+    labels = [label for label, _cmd in steps]
+    assert labels == ["ruff", "mypy", "bandit", "pytest"]
+    bandit_cmd = next(cmd for label, cmd in steps if label == "bandit")
+    assert "-ll" in bandit_cmd  # HIGH-severity only
+
+
 def test_subprocess_sandbox_rejects_missing_workspace(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         SubprocessSandbox().run_ci(str(tmp_path / "nope"))

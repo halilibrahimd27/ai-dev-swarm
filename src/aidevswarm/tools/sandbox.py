@@ -150,16 +150,22 @@ class SubprocessSandbox:
                 _, text2 = self._uv_pip(python, ws, "-e", ".")
                 out += text2
         # Ensure the gate tools exist even if the project didn't declare them.
-        _, text3 = self._uv_pip(python, ws, "ruff", "mypy", "pytest", "hypothesis")
+        _, text3 = self._uv_pip(python, ws, "ruff", "mypy", "pytest", "hypothesis", "bandit")
         return out + text3
 
     def _uv_pip(self, python: str, ws: Path, *args: str) -> tuple[int, str]:
         return self._sh([self._uv, "pip", "install", "--python", python, *args], ws)
 
     def _gate_steps(self, ws: Path, bin_dir: Path) -> list[tuple[str, list[str]]]:
+        src = _source_dirs(ws)
         return [
             ("ruff", [str(bin_dir / "ruff"), "check", "."]),
-            ("mypy", [str(bin_dir / "mypy"), "--strict", *_source_dirs(ws)]),
+            ("mypy", [str(bin_dir / "mypy"), "--strict", *src]),
+            # Security scan, HIGH-severity only (-ll) so it flags real issues
+            # (e.g. shell=True, hardcoded secrets, unsafe yaml) without
+            # nagging on low-confidence noise — generated code is shipped to
+            # the operator's GitHub, so it must clear the same security bar.
+            ("bandit", [str(bin_dir / "bandit"), "-r", *src, "-ll", "-q"]),
             # no:cacheprovider keeps the run hermetic; the project's
             # [tool.pytest] testpaths already scope collection.
             ("pytest", [str(bin_dir / "pytest"), "-q", "-p", "no:cacheprovider"]),

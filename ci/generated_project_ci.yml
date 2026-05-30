@@ -47,5 +47,13 @@ jobs:
             uv run mypy --strict .
           fi
 
+      - name: bandit (HIGH-severity security scan)
+        run: |
+          if [ -d src ]; then
+            uv run bandit -r src -ll -q
+          else
+            uv run bandit -r . -ll -q
+          fi
+
       - name: pytest
         run: uv run pytest -q
