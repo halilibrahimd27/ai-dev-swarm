@@ -2,8 +2,10 @@
 
 Creates a PRIVATE repo per project (POST /user/repos), then the
 orchestrator's tick pushes the project's ``main`` branch
-milestone-by-milestone as the build runs. There is no PR / auto-merge
-mode — the operator owns the repo and reviews on the diff.
+milestone-by-milestone as the build runs — the DEFAULT flow, where the
+operator owns the repo and reviews on the diff. ``open_pr`` exists as a
+helper for a future ``pr_only`` mode (ARCHITECTURE §5.6) but is not wired
+into the default tick flow.
 
 The implementation uses the REST API directly via ``httpx`` to avoid
 pulling another dependency.

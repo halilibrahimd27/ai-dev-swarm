@@ -49,12 +49,21 @@ Allowed values for the ``intent`` field (others are forbidden):
   kill_switch          {"intent":"kill_switch","reason":"<text>"}
   list_state           {"intent":"list_state"}
   show_transcript      {"intent":"show_transcript","project_id":"<UUID>"}
+  ideate_now           {"intent":"ideate_now"}
+  submit_idea          {"intent":"submit_idea","title":"<text 3-120 chars>","summary":"<text 10-600 chars>","rationale":"<text>","stack":[],"tags":[]}
+  update_setting       {"intent":"update_setting","key":"<setting key>","value":"<string value>"}
 
 Rules:
   - If you can't determine the right intent or required fields, reply
     with {"intent":"list_state"}.
   - NEVER invent UUIDs. If a UUID is required but not given, reply
     with {"intent":"list_state"}.
+  - ideate_now ("come up with a new idea", "ideate now") needs no fields.
+    submit_idea ("build X", "I have an idea: ...") needs title + summary
+    you derive from the message (rationale/stack/tags optional, default
+    "" / []). update_setting ("set daily budget to 50", "change the
+    per-milestone cap") needs the key + value as strings; do NOT guess a
+    key you are unsure of — fall back to list_state instead.
   - For destructive intents (abort_project, rescope, transform_project,
     drop_and_start_new, switch_to_idea, reject_idea, kill_switch), DO
     NOT set ``confirmed`` — the bot handles confirmation.

@@ -43,6 +43,18 @@
 
   const POLL_OK = 5000;
   const POLL_MAX = 30000;
+  // FIFO cap on the dedup sets so a long-lived live session (every llm_chunk
+  // adds an id) can't grow them without bound.
+  const SEEN_CAP = 5000;
+
+  function markSeen(set, id) {
+    // True if newly seen. A JS Set preserves insertion order, so the first
+    // key is the oldest — evict it once we exceed the cap.
+    if (set.has(id)) return false;
+    set.add(id);
+    if (set.size > SEEN_CAP) set.delete(set.values().next().value);
+    return true;
+  }
 
   // Build markers carry a milestone/CI/review status, not agent chatter.
   const MARKER_KINDS = new Set([
@@ -420,10 +432,7 @@
   }
 
   function renderEntry(entry, opts) {
-    if (entry.id) {
-      if (state.seenIds.has(entry.id)) return;
-      state.seenIds.add(entry.id);
-    }
+    if (entry.id && !markSeen(state.seenIds, entry.id)) return;
     registerRole(entry.role);
     // Boardroom: decisions also fan to the curated stream — but only for live
     // entries; history replay loads the boardroom from its own endpoint, so
@@ -456,10 +465,7 @@
   function renderBoardroomEntry(entry) {
     const stream = document.getElementById("boardroom-stream");
     if (!stream) return;
-    if (entry.id) {
-      if (state.seenBoardroom.has(entry.id)) return;
-      state.seenBoardroom.add(entry.id);
-    }
+    if (entry.id && !markSeen(state.seenBoardroom, entry.id)) return;
     const role = entry.role || "Team";
     const li = document.createElement("li");
     li.className = "decision role-" + role + (role === "Finance" ? " is-finance" : "");

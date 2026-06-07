@@ -15,6 +15,7 @@ satisfy. These tests pin down:
 
 from __future__ import annotations
 
+from typing import get_args
 from uuid import uuid4
 
 import pytest
@@ -130,6 +131,20 @@ def test_destructive_intents_default_to_unconfirmed() -> None:
         parsed = _ADAPTER.validate_python(payload)
         assert parsed.confirmed is False  # type: ignore[union-attr]
         assert requires_confirmation(parsed) is True
+
+
+def test_destructive_intents_match_schema_confirmed_fields() -> None:
+    """DESTRUCTIVE_INTENTS must EXACTLY equal the set of command variants that
+    carry a ``confirmed`` flag — DERIVED from the schema, so a new
+    confirm-bearing command can't silently drift out of the confirmation set
+    (the hardcoded-iteration test above would still pass while a real command
+    skipped its [Yes][No] gate)."""
+    union = get_args(Command)[0]  # Annotated[A | B | ..., Field(...)] → the union
+    variants = get_args(union)
+    confirmed_intents = {
+        v.model_fields["intent"].default for v in variants if "confirmed" in v.model_fields
+    }
+    assert confirmed_intents == set(DESTRUCTIVE_INTENTS)
 
 
 def test_non_destructive_intents_never_require_confirmation() -> None:

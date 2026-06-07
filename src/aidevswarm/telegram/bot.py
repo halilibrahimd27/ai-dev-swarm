@@ -232,6 +232,16 @@ class TelegramBot:
                 "I didn't understand that. Try a known command (/help) or rephrase.",
             )
             return
+        except Exception as exc:
+            # parse() also does a live HTTP call to Anthropic — a network /
+            # API / rate-limit error (httpx.HTTPError, JSON decode, …) must
+            # NOT leave the operator hanging with no reply. Report transiently.
+            self._log.warning("bot.intent_call_failed", error=str(exc))
+            await self._reply(
+                update,
+                "Couldn't reach the AI service to read that — please try again in a moment.",
+            )
+            return
         await self._dispatch(update, command)
 
     # ------------------------------------------------------------------
