@@ -7,8 +7,8 @@ returns a :class:`aidevswarm.schemas.NoveltyReport`. The Critic role
 rejects ideas that score below the configured threshold (default 0.6).
 
 The HTTP layer is intentionally thin: ``httpx`` with a retry-on-429
-loop and an in-process LRU cache. Phase 3 doesn't persist the cache
-to pgvector — the Phase 4 replanner is the natural home for that.
+loop. (No caching layer — each ideation pass is infrequent and small,
+so the earlier "in-process LRU cache" note never materialised.)
 
 `AIDEVSWARM_NOVELTY_LIVE=1` in env enables live network calls in
 integration tests; unit tests use ``respx`` to record fixed responses.
@@ -39,6 +39,26 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     intersection = a & b
     union = a | b
     return len(intersection) / len(union)
+
+
+def _search_query(title: str, summary: str, *, max_extra: int = 5) -> str:
+    """Build a prior-art search query from the title PLUS the most
+    distinctive summary terms.
+
+    Retrieval used to query by title alone while scoring against
+    title+summary — so an invented product name as the title (e.g.
+    "Zephyr") retrieved nothing relevant and the idea looked falsely
+    novel. We append the longest, most domain-specific summary tokens
+    (the nouns) so a same-purpose repo under a different name is actually
+    retrieved, making retrieval symmetric with scoring. Deterministic
+    ordering: longest token first, ties broken alphabetically.
+    """
+    title_tokens = _tokenise(title)
+    extra = sorted(
+        (t for t in _tokenise(summary) if t not in title_tokens and len(t) > 3),
+        key=lambda t: (-len(t), t),
+    )[:max_extra]
+    return " ".join([title.strip(), *extra]).strip()
 
 
 class SelfHistoryDuplicate:
@@ -115,21 +135,26 @@ class NoveltyChecker:
         Compares the idea's title AND summary tokens (not just the title)
         against each candidate's name AND description, so a project that does
         the same thing under a different name is still caught — less brittle
-        than a pure title match, without needing embeddings.
+        than a pure title match, without needing embeddings. The GitHub query
+        itself is built from title + the most distinctive summary terms
+        (``_search_query``) so RETRIEVAL is symmetric with the title+summary
+        SCORING — otherwise an invented product name as the title would
+        retrieve nothing and the idea would look falsely novel.
         """
         idea_tokens = _tokenise(f"{idea.title} {idea.summary}")
-        matches = list(self._github_matches(idea_tokens, idea.title))
+        query = _search_query(idea.title, idea.summary)
+        matches = list(self._github_matches(idea_tokens, query))
         matches.extend(self._pypi_matches(idea_tokens, idea.title))
         matches.sort(key=lambda m: m.similarity, reverse=True)
         top = matches[: self._max_matches]
         highest = top[0].similarity if top else 0.0
         return NoveltyReport(score=max(0.0, min(1.0, 1.0 - highest)), top_matches=top)
 
-    def _github_matches(self, idea_tokens: set[str], idea_title: str) -> list[Match]:
+    def _github_matches(self, idea_tokens: set[str], query: str) -> list[Match]:
         try:
             response = self._get_with_retry(
                 GITHUB_SEARCH_URL,
-                params={"q": idea_title, "per_page": str(self._max_matches)},
+                params={"q": query, "per_page": str(self._max_matches)},
                 headers=self._github_headers(),
             )
         except httpx.HTTPError as exc:
@@ -137,7 +162,14 @@ class NoveltyChecker:
             return []
         if response is None:
             return []
-        items: list[dict[str, object]] = (response.json() or {}).get("items", [])
+        try:
+            payload = response.json() or {}
+        except ValueError as exc:
+            # A 200 with a non-JSON body (a rate-limit HTML page, a proxy
+            # error) must NOT abort the whole ideation round.
+            self._log.warning("novelty.github_bad_json", error=str(exc))
+            return []
+        items: list[dict[str, object]] = payload.get("items", [])
         return [
             Match(
                 source="github",

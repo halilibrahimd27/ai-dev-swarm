@@ -26,7 +26,8 @@ class CriticScores(BaseModel):
     """Per-criterion scores from the Critic, 0-100 each.
 
     Weights live with the Critic prompt; the aggregated ``total`` is
-    re-computed by the orchestrator to keep the scoring policy honest.
+    re-computed from these sub-scores (:attr:`weighted_total`) to keep the
+    scoring policy honest — the LLM's own ``total`` field is NOT trusted.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -36,6 +37,19 @@ class CriticScores(BaseModel):
     novelty: int = Field(ge=0, le=100)
     decomposability: int = Field(ge=0, le=100)
     buildability: int = Field(ge=0, le=100)
+
+    @property
+    def weighted_total(self) -> int:
+        """The canonical 0-100 score: the rubric-weighted sum (ARCHITECTURE
+        §6). This — not the LLM-emitted ``total`` — is what the gate uses, so
+        the model can't inflate its own score past the threshold."""
+        return round(
+            self.depth_ambition * 0.30
+            + self.usefulness_niche * 0.25
+            + self.novelty * 0.20
+            + self.decomposability * 0.15
+            + self.buildability * 0.10
+        )
 
 
 class ScoredIdea(BaseModel):
@@ -88,7 +102,12 @@ class IdeaEvaluation(BaseModel):
             summary=scored.idea.summary,
             scores=scored.scores,
             total=scored.total,
-            novel=scored.rejected_reason is None,
+            # `novel` reflects the NOVELTY signal specifically, not "rejected
+            # for any reason at all". The novelty/dedup gate zeroes the
+            # novelty sub-score when it fires, so novelty == 0 ⟺ not novel;
+            # a low-score rejection for OTHER reasons no longer mislabels a
+            # genuinely-original idea as un-novel.
+            novel=scored.scores.novelty > 0,
             accepted=accepted,
             rejected_reason=scored.rejected_reason,
             project_id=project_id,

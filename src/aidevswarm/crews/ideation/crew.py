@@ -215,13 +215,15 @@ class CrewaiIdeationCrew:
         log = get_logger(__name__)
         for entry in data:
             try:
+                scores = CriticScores.model_validate(keep_known(CriticScores, entry["scores"]))
                 out.append(
                     ScoredIdea(
                         idea=Idea.model_validate(keep_known(Idea, entry["idea"])),
-                        scores=CriticScores.model_validate(
-                            keep_known(CriticScores, entry["scores"])
-                        ),
-                        total=int(entry["total"]),
+                        scores=scores,
+                        # Recompute from the sub-scores via the rubric weights;
+                        # the LLM's own `total` is ignored so it can't inflate
+                        # its way past the gate.
+                        total=scores.weighted_total,
                         rejected_reason=entry.get("rejected_reason"),
                     )
                 )

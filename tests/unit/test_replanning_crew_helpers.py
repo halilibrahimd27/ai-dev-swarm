@@ -9,10 +9,7 @@ tick-thread against a malformed LLM reply.
 
 from __future__ import annotations
 
-import json
 from uuid import UUID, uuid4
-
-import pytest
 
 from aidevswarm.crews.replanning.crew import (
     CrewaiReplanningCrew,
@@ -95,14 +92,26 @@ def test_parse_recovers_noop_from_garbage() -> None:
     assert isinstance(CrewaiReplanningCrew._parse(_RawHolder()), Noop)
 
 
-def test_parse_lets_json_decode_errors_bubble() -> None:
-    """Invalid JSON is a hard error — only schema mismatches Noop-recover."""
+def test_parse_recovers_a_real_action_from_a_fenced_reply() -> None:
+    """A ```json-fenced reply (the COMMON Opus shape) must be recovered,
+    not crash. Previously json.loads ran outside the try, so a fenced reply
+    raised and took the tick down → the project got BLOCKED."""
+
+    class _Fenced:
+        raw = '```json\n{"action":"escalate","reason":"stuck"}\n```'
+
+    action = CrewaiReplanningCrew._parse(_Fenced())
+    assert isinstance(action, Escalate)
+    assert action.reason == "stuck"
+
+
+def test_parse_recovers_noop_from_unrepairable_json() -> None:
+    """Truly invalid JSON degrades to Noop — it must NEVER raise."""
 
     class _RawHolder:
         raw: str = "not even json {{"
 
-    with pytest.raises(json.JSONDecodeError):
-        CrewaiReplanningCrew._parse(_RawHolder())
+    assert isinstance(CrewaiReplanningCrew._parse(_RawHolder()), Noop)
 
 
 def test_parse_dispatches_to_each_action_variant() -> None:

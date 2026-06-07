@@ -8,7 +8,6 @@ so tests can substitute a fake without paying the import cost.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -16,6 +15,7 @@ from uuid import UUID
 
 from pydantic import TypeAdapter
 
+from aidevswarm.crews._parsing import loads_lenient
 from aidevswarm.crews._spend import record_crew_spend
 from aidevswarm.logging_config import get_logger
 from aidevswarm.observability import TranscriptPublisher, publish_decision
@@ -151,12 +151,16 @@ class CrewaiReplanningCrew:
     @staticmethod
     def _parse(crew_output: Any) -> ReplannerAction:
         raw = getattr(crew_output, "raw", crew_output)
-        data = json.loads(raw) if isinstance(raw, str) else raw
         try:
+            # loads_lenient (json_repair) strips ``` fences and closes
+            # truncated structures — the SAME parser every other crew uses.
+            # Plain json.loads here used to be OUTSIDE the try, so a fenced
+            # or prose-wrapped reply (the common Opus shape) raised and
+            # CRASHED the tick → the project got BLOCKED. Now any unusable
+            # reply degrades to Noop instead.
+            data = loads_lenient(raw) if isinstance(raw, str) else raw
             return _ADAPTER.validate_python(data)
         except Exception:
-            # LLM produced something the schema doesn't accept — be
-            # defensive and Noop rather than crash the tick.
             return Noop()
 
 
