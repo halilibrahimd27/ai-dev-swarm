@@ -68,6 +68,11 @@ class _FakeTranscriptRepo:
     def list_for_project(self, project_id: UUID, *, limit: int = 5000) -> list[TranscriptEntry]:
         return [e for e in self.entries if e.project_id == project_id][:limit]
 
+    def list_by_kind(
+        self, project_id: UUID, *, kind: str, limit: int = 1000
+    ) -> list[TranscriptEntry]:
+        return [e for e in self.entries if e.project_id == project_id and e.kind == kind][:limit]
+
 
 def _spec() -> ProjectSpec:
     return ProjectSpec(

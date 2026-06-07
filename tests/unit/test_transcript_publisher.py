@@ -26,6 +26,11 @@ class _FakeRepo:
     def list_for_project(self, project_id: object, *, limit: int = 5000) -> list[TranscriptEntry]:
         return list(self.appended)
 
+    def list_by_kind(
+        self, project_id: object, *, kind: str, limit: int = 1000
+    ) -> list[TranscriptEntry]:
+        return [e for e in self.appended if e.kind == kind]
+
 
 class _FakeSink:
     def __init__(self) -> None:

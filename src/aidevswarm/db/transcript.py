@@ -14,7 +14,7 @@ to the live sink (the bridge) unchanged.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from psycopg.types.json import Json
@@ -30,6 +30,10 @@ class TranscriptRepo(Protocol):
     def append(self, entry: TranscriptEntry) -> None: ...
 
     def list_for_project(self, project_id: UUID, *, limit: int = 5000) -> list[TranscriptEntry]: ...
+
+    def list_by_kind(
+        self, project_id: UUID, *, kind: str, limit: int = 1000
+    ) -> list[TranscriptEntry]: ...
 
 
 class PsycopgTranscriptRepo:
@@ -71,20 +75,31 @@ class PsycopgTranscriptRepo:
                 (str(project_id), limit),
             )
             rows = cur.fetchall()
-        rows.reverse()  # newest-first query → oldest-first for replay
-        return [
-            TranscriptEntry(
-                id=row[0],
-                topic="transcript",
-                project_id=project_id,
-                role=row[1],
-                kind=row[2],
-                text=row[3],
-                extra=row[4] or {},
-                at=_as_datetime(row[5]),
+        return _rows_to_entries(project_id, rows)
+
+    def list_by_kind(
+        self, project_id: UUID, *, kind: str, limit: int = 1000
+    ) -> list[TranscriptEntry]:
+        """Most-recent entries of ONE ``kind`` (e.g. boardroom decisions).
+
+        Filters by kind in SQL so a long project's older decisions aren't
+        lost behind the raw-firehose row cap — fetching the last 5000 raw
+        rows and filtering in Python silently drops decisions older than
+        that window on a chatty project.
+        """
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, role, kind, body, extra, at
+                  FROM transcript_entries
+                 WHERE project_id = %s AND kind = %s
+                 ORDER BY seq DESC
+                 LIMIT %s
+                """,
+                (str(project_id), kind, limit),
             )
-            for row in rows
-        ]
+            rows = cur.fetchall()
+        return _rows_to_entries(project_id, rows)
 
 
 class PersistingTranscriptPublisher:
@@ -102,6 +117,25 @@ class PersistingTranscriptPublisher:
             except Exception as exc:  # persistence is best-effort
                 self._log.warning("transcript.persist_failed", error=str(exc))
         self._sink.publish(entry)
+
+
+def _rows_to_entries(project_id: UUID, rows: list[Any]) -> list[TranscriptEntry]:
+    """Map newest-first DB rows to oldest-first TranscriptEntry list (replay)."""
+    rows = list(rows)
+    rows.reverse()  # newest-first query → oldest-first for replay
+    return [
+        TranscriptEntry(
+            id=row[0],
+            topic="transcript",
+            project_id=project_id,
+            role=row[1],
+            kind=row[2],
+            text=row[3],
+            extra=row[4] or {},
+            at=_as_datetime(row[5]),
+        )
+        for row in rows
+    ]
 
 
 def _as_datetime(value: object) -> datetime:

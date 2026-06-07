@@ -145,15 +145,18 @@ def build_app(
             if origin_host is not None and origin_host not in _LOOPBACK_HOSTS:
                 log.warning("api.cross_origin_refused", origin_host=origin_host)
                 return JSONResponse(status_code=403, content={"detail": "cross-origin refused"})
-            if _rate_limited():
-                log.warning("api.rate_limited", limit_per_min=rate_limit)
-                return JSONResponse(status_code=429, content={"detail": "rate limit exceeded"})
             if api_token is not None:
                 provided = _bearer_token(request.headers.get("authorization"))
                 if provided is None or not hmac.compare_digest(provided, api_token):
                     return JSONResponse(
                         status_code=401, content={"detail": "missing or invalid API token"}
                     )
+            # Rate-limit ONLY authenticated requests, so a flood of rejected
+            # (cross-origin / bad-token) calls can't exhaust the operator's
+            # own window and lock them out with 429s.
+            if _rate_limited():
+                log.warning("api.rate_limited", limit_per_min=rate_limit)
+                return JSONResponse(status_code=429, content={"detail": "rate limit exceeded"})
         return await call_next(request)
 
     # ------------------------------------------------------------------
@@ -256,10 +259,12 @@ def build_app(
         SSE stream carries new decisions, which the UI filters client-side."""
         if transcript_repo is None:
             return []
-        entries = await asyncio.to_thread(transcript_repo.list_for_project, project_id)
-        return [
-            json.loads(redactor(e.model_dump_json())) for e in entries if e.kind == DECISION_KIND
-        ]
+        # Query decisions by kind in SQL so a long/chatty project's older
+        # decisions aren't dropped behind the raw-firehose row cap.
+        entries = await asyncio.to_thread(
+            lambda: transcript_repo.list_by_kind(project_id, kind=DECISION_KIND)
+        )
+        return [json.loads(redactor(e.model_dump_json())) for e in entries]
 
     # ------------------------------------------------------------------
     # REST: commands (shared with Telegram)
@@ -267,7 +272,12 @@ def build_app(
 
     @app.post("/api/commands", response_model=CommandResult)
     async def post_command(request: Request) -> CommandResult:
-        raw = await request.json()
+        try:
+            raw = await request.json()
+        except json.JSONDecodeError as exc:
+            # A malformed body is a client error (400), not a server crash
+            # (500) — the parse used to run outside the try.
+            raise HTTPException(status_code=400, detail="malformed JSON body") from exc
         try:
             command = _COMMAND_ADAPTER.validate_python(raw)
         except ValidationError as exc:
