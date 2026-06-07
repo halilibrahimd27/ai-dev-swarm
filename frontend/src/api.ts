@@ -84,6 +84,14 @@ export interface SpendByProject {
   tokens: number;
   cost_usd: number;
 }
+/** A project row with its per-role breakdown (for expand). */
+export interface SpendProjectRow extends SpendByProject {
+  roles: SpendByRole[];
+}
+/** An all-time role row with its per-project breakdown (for expand). */
+export interface SpendRoleRow extends SpendByRole {
+  projects: SpendByProject[];
+}
 export interface DailyPoint {
   date: string;
   cost: number;
@@ -94,7 +102,8 @@ export interface SpendSummary {
   all_time_tokens: number;
   all_time_cost_usd: number;
   by_role: SpendByRole[];
-  by_project: SpendByProject[];
+  all_time_by_role: SpendRoleRow[];
+  by_project: SpendProjectRow[];
   daily_series: DailyPoint[];
 }
 

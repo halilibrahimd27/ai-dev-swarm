@@ -104,7 +104,21 @@ export function App() {
 
   const act = useCallback(
     async (command: Command): Promise<boolean> => {
-      const res = await sendCommand(command);
+      let res = await sendCommand(command);
+      // The server asks before doing something it would otherwise skip/guard
+      // (e.g. "a project is active — ideate anyway?"). Confirm, then resend
+      // with the right override flag (force for ideation, confirmed otherwise).
+      if (res.requires_confirmation) {
+        if (!window.confirm(res.detail + "\n\nProceed?")) {
+          toast(false, `${command.intent}: cancelled`);
+          return false;
+        }
+        const retry: Command =
+          command.intent === "ideate_now"
+            ? { ...command, force: true }
+            : { ...command, confirmed: true };
+        res = await sendCommand(retry);
+      }
       const line = `${res.intent}: ${res.detail || (res.ok ? "ok" : "failed")}`;
       toast(res.ok, line);
       setEvents((e) => [{ ok: res.ok, intent: res.intent, detail: res.detail, at: new Date().toISOString() }, ...e].slice(0, 200));

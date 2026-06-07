@@ -423,7 +423,10 @@ a { color: var(--accent); text-decoration: none; }
 .eval .etotal { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; line-height: 1; }
 .eval .esum { font-size: 12.5px; color: var(--muted); }
 .scorebars { display: flex; flex-direction: column; gap: 7px; }
-.scorebar { display: grid; grid-template-columns: 100px 1fr 32px; align-items: center; gap: var(--sp-2); font-size: 11px; color: var(--muted); }
+.scorebar { display: grid; grid-template-columns: 130px 1fr 28px; align-items: center; gap: var(--sp-2); font-size: 11px; color: var(--muted); }
+.everdict { font-size: 12px; line-height: 1.5; padding: 9px 11px; border-radius: var(--r-sm); background: var(--surface-2); border-left: 2px solid var(--muted); color: var(--fg-soft); }
+.everdict.ok { border-left-color: var(--ok); }
+.everdict.rej { border-left-color: var(--danger); }
 
 /* --------------------------------------------------------------- settings */
 .settings-group h3 { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin: 0 0 var(--sp-2); }
