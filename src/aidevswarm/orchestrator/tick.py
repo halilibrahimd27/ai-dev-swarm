@@ -49,7 +49,7 @@ from aidevswarm.schemas import (
     Split,
 )
 from aidevswarm.settings import Settings
-from aidevswarm.tools.budget import UnlimitedTokenBudget
+from aidevswarm.tools.budget import BudgetExceeded, UnlimitedTokenBudget
 from aidevswarm.tools.protocols import (
     GitHubTool,
     KillSwitch,
@@ -239,11 +239,25 @@ class Tick:
         # the remote is set so each milestone can be pushed as it lands.
         project = self._ensure_repo(project, workspace)
 
-        result = self._d.build_crew.run(
-            milestone=milestone,
-            workspace=workspace,
-            sandbox=self._d.sandbox,
-        )
+        try:
+            result = self._d.build_crew.run(
+                milestone=milestone,
+                workspace=workspace,
+                sandbox=self._d.sandbox,
+            )
+        except BudgetExceeded:
+            # A budget cap was hit MID-build (between the milestone's several
+            # SDK calls). Pause like the daily throttle at tick entry: reset
+            # the milestone to PENDING so the next tick rebuilds it, and
+            # return WITHOUT recording a failed attempt — an exhausted budget
+            # is a throttle, not a milestone quality failure.
+            self._log.info(
+                "tick.budget_paused_mid_build",
+                project=project.name,
+                milestone=milestone.title,
+            )
+            self._d.milestone_repo.update_state(milestone.id, MilestoneState.PENDING)
+            return None
 
         if not result.success:
             return self._handle_build_failure(project, milestone, result)
@@ -395,6 +409,20 @@ class Tick:
             )
             return self._move(project, ProjectState.BUILDING)
 
+        # 3c) Budget gate. The replanner is two Opus agents whose spend counts
+        #     against THIS milestone — so a milestone that already tripped its
+        #     per-milestone sanity cap would re-pay for triage every retry. If
+        #     the daily throttle OR this milestone's cap is spent, skip the LLM
+        #     and route to BUILDING, where the tick-entry guard pauses (daily)
+        #     or trips the circuit breaker (per-milestone) cleanly.
+        if not self._d.token_budget.can_spend(milestone_id=next_milestone.id, requested=0):
+            self._log.info(
+                "replanner.skipped_budget",
+                project=project.name,
+                milestone=next_milestone.title,
+            )
+            return self._move(project, ProjectState.BUILDING)
+
         # 4) Replanner crew (LLM): only when the next milestone has failed
         #    before (retry_count > 0). Always Noop-on-error so we never
         #    take the project down because of a tracing or quota blip.
@@ -489,12 +517,23 @@ class Tick:
                 self._log.info("replanner.noop", project=project.name)
                 return self._move(project, ProjectState.BUILDING)
             case Amend():
-                self._d.milestone_repo.update_spec(action.milestone_id, action.patch)
-                self._log.info(
-                    "replanner.amend",
-                    project=project.name,
-                    milestone=str(action.milestone_id),
-                )
+                try:
+                    self._d.milestone_repo.update_spec(action.milestone_id, action.patch)
+                    self._log.info(
+                        "replanner.amend",
+                        project=project.name,
+                        milestone=str(action.milestone_id),
+                    )
+                except Exception as exc:
+                    # update_spec now REJECTS a mistyped/unknown patch key
+                    # (it used to silently drop it). A bad LLM patch must not
+                    # block the project — keep the existing spec and continue.
+                    self._log.warning(
+                        "replanner.amend_rejected",
+                        project=project.name,
+                        milestone=str(action.milestone_id),
+                        error=str(exc),
+                    )
                 return self._move(project, ProjectState.BUILDING)
             case Split():
                 self._d.milestone_repo.replace_with(action.milestone_id, action.into)

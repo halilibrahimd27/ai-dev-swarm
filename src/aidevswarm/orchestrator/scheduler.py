@@ -26,6 +26,7 @@ from uuid import UUID
 
 from aidevswarm.db.protocols import ProjectRepo
 from aidevswarm.logging_config import get_logger
+from aidevswarm.orchestrator.state_machine import legal_project_successors
 from aidevswarm.orchestrator.tick import Tick
 from aidevswarm.schemas import TERMINAL_PROJECT_STATES, Project, ProjectState
 
@@ -293,6 +294,22 @@ class ProjectPool:
             if _is_transient_error(exc)
             else f"crashed in {project.state.value}: "
         )
+        # Only block if BLOCKED is a LEGAL successor of the current state —
+        # writing it raw used to produce illegal PLANNING->BLOCKED (corrupting
+        # a never-planned project's resume). The transition table now allows
+        # BLOCKED from every non-terminal state, so this holds in practice;
+        # the guard is a belt-and-braces against a terminal-state race.
+        if ProjectState.BLOCKED not in legal_project_successors(project.state):
+            self._log.error(
+                "project_pool.cannot_block",
+                project=project.name,
+                state=project.state.value,
+                error=str(exc)[:280],
+            )
+            self._safe_status(
+                project.id, f"crash in {project.state.value} (not blockable): {type(exc).__name__}"
+            )
+            return
         try:
             self._repo.update_state(project.id, ProjectState.BLOCKED)
             self._safe_status(project.id, f"{reason}{type(exc).__name__}: {str(exc)[:280]}")

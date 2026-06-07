@@ -200,6 +200,20 @@ class CommandRouter:
         # git workspace persist, so it picks up the next pending one.
         project = self.project_repo.get(cmd.project_id)
         if project is not None and project.state is ProjectState.BLOCKED:
+            # A project blocked BEFORE planning produced any milestones (e.g.
+            # a crash in PLANNING) must re-plan, not jump to BUILDING — forcing
+            # BUILDING onto an empty graph makes next_pending return None and
+            # the project leaps straight to INTEGRATION on an empty repo.
+            has_milestones = (
+                bool(self.milestone_repo.list_for_project(cmd.project_id))
+                if self.milestone_repo is not None
+                else True
+            )
+            if not has_milestones:
+                self.project_repo.update_state(cmd.project_id, ProjectState.PLANNING)
+                self.project_repo.set_status_detail(cmd.project_id, "resumed → re-planning")
+                self._log.info("router.unblocked_replan", project_id=str(cmd.project_id))
+                return CommandResult(ok=True, intent=cmd.intent, detail="resumed → re-planning")
             # Give the failed milestone a fresh set of attempts; otherwise it
             # keeps its exhausted retry_count and re-blocks on the next
             # failure, so "resume" would never actually progress.

@@ -23,16 +23,26 @@ class IllegalTransition(RuntimeError):
 
 
 # Project transitions are defined explicitly per ARCHITECTURE.md §2.
+# A non-transient crash in ANY non-terminal state must be able to land in
+# BLOCKED ("stopped, needs a human, resumable") — a crash while PLANNING or
+# QUEUED genuinely needs a look too, not just a crash mid-build. So every
+# pre-build state also lists BLOCKED. BLOCKED can resume to BUILDING (work
+# exists) OR back to PLANNING (blocked before any milestone was produced).
 PROJECT_TRANSITIONS: Final[dict[ProjectState, frozenset[ProjectState]]] = {
-    ProjectState.QUEUED: frozenset({ProjectState.PLANNING, ProjectState.KILLED}),
+    ProjectState.QUEUED: frozenset(
+        {ProjectState.PLANNING, ProjectState.BLOCKED, ProjectState.KILLED}
+    ),
     ProjectState.PLANNING: frozenset(
         {
             ProjectState.AWAITING_APPROVAL,
             ProjectState.BUILDING,  # when require_approval is false
+            ProjectState.BLOCKED,  # a non-transient planning crash
             ProjectState.KILLED,
         }
     ),
-    ProjectState.AWAITING_APPROVAL: frozenset({ProjectState.BUILDING, ProjectState.KILLED}),
+    ProjectState.AWAITING_APPROVAL: frozenset(
+        {ProjectState.BUILDING, ProjectState.BLOCKED, ProjectState.KILLED}
+    ),
     ProjectState.BUILDING: frozenset(
         {
             ProjectState.REPLANNING,
@@ -52,7 +62,9 @@ PROJECT_TRANSITIONS: Final[dict[ProjectState, frozenset[ProjectState]]] = {
     ProjectState.INTEGRATION: frozenset(
         {ProjectState.DONE, ProjectState.BLOCKED, ProjectState.KILLED}
     ),
-    ProjectState.BLOCKED: frozenset({ProjectState.BUILDING, ProjectState.KILLED}),
+    ProjectState.BLOCKED: frozenset(
+        {ProjectState.BUILDING, ProjectState.PLANNING, ProjectState.KILLED}
+    ),
     ProjectState.DONE: frozenset(),
     ProjectState.KILLED: frozenset(),
 }

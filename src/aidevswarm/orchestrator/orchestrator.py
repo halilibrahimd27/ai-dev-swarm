@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from concurrent.futures import Future
 from pathlib import Path
 from typing import Any
 
@@ -128,6 +129,10 @@ def _build_tick(
             mcp_servers=load_mcp_servers(),
             recorder=recorder,
             transcript=transcript,
+            # Interleaved budget guard: stop a single milestone from
+            # overspending the daily / per-milestone cap across its several
+            # SDK calls (Developer, Tester, CI-repair, Reviewer).
+            budget=token_budget,
         ),
         replanning_crew=CrewaiReplanningCrew(
             settings, steering_repo=steering_repo, recorder=recorder, transcript=transcript
@@ -214,11 +219,29 @@ async def _async_main() -> None:
 
     redactor = SecretRedactor(settings.redact_patterns)
     loop = asyncio.get_running_loop()
+    # Ideation can be triggered from two places that must NOT race: the 24h
+    # cron (loop thread) and the operator's IdeateNow (a worker thread, since
+    # CommandRouter.dispatch runs under asyncio.to_thread). The lock serializes
+    # them so the "is there already work?" guard + project creation are atomic.
+    ideation_lock = asyncio.Lock()
+    # Retain fire-and-forget futures: asyncio keeps only a weak ref to a task,
+    # so a dropped handle can be GC'd mid-run.
+    background_tasks: set[Future[None]] = set()
+
+    def _trigger_ideation() -> None:
+        # Called from a worker thread → schedule on the loop THREAD-SAFELY
+        # (loop.create_task is not thread-safe and may not wake an idle loop).
+        future = asyncio.run_coroutine_threadsafe(
+            _run_ideation_once(tick, idea_repo, log, lock=ideation_lock), loop
+        )
+        background_tasks.add(future)
+        future.add_done_callback(background_tasks.discard)
+
     router = CommandRouter(
         project_repo=project_repo,
         steering_repo=steering_repo,
         kill_switch=tick._d.kill_switch,
-        ideate_runner=lambda: (loop.create_task(_run_ideation_once(tick, idea_repo, log)), None)[1],
+        ideate_runner=_trigger_ideation,
         settings=settings,
         settings_repo=settings_override_repo,
         milestone_repo=milestone_repo,
@@ -239,9 +262,10 @@ async def _async_main() -> None:
 
     async def ideation_cron() -> None:
         # _run_ideation_once self-guards (skips while a project is active
-        # or awaiting approval), so the cron just invokes it.
+        # or awaiting approval), so the cron just invokes it. Shares the
+        # lock with the operator IdeateNow path so the two never race.
         log.info("ideation_cron.tick")
-        await _run_ideation_once(tick, idea_repo, log)
+        await _run_ideation_once(tick, idea_repo, log, lock=ideation_lock)
 
     scheduler = Scheduler(
         jobs=[
@@ -287,6 +311,8 @@ async def _run_ideation_once(
     tick: Tick,
     idea_repo: IdeaEvaluationRepo,
     log: Any,
+    *,
+    lock: asyncio.Lock | None = None,
 ) -> None:
     """Ideate (up to ``ideation_max_rounds``) until an idea clears the gate.
 
@@ -295,20 +321,25 @@ async def _run_ideation_once(
     must score >= ``ideation_min_score`` AND be novel to become a
     project; the first round that yields a winner queues it and stops.
     LLM work runs on a worker thread so the event loop stays responsive.
+
+    ``lock`` (shared by the cron + the operator IdeateNow) makes the
+    "is there already work?" guard and the project creation ATOMIC, so two
+    concurrent triggers can't both pass the guard and queue two projects.
     """
-    # Never ideate while ANY non-terminal project exists — active,
-    # queued, awaiting approval, OR blocked. A blocked project is NOT
-    # abandoned for a new one: the swarm waits for the operator to fix +
-    # resume it (its milestones + workspace persist, so it continues
-    # from where it left off). New ideas only flow once every project is
-    # done or killed.
-    if await asyncio.to_thread(_swarm_has_work, tick._d.project_repo):
-        log.info("ideation.skip_has_work")
-        return
-    for round_num in range(1, tick._d.settings.ideation_max_rounds + 1):
-        if await _ideate_round(tick, idea_repo, round_num, log):
+    async with lock or asyncio.Lock():
+        # Never ideate while ANY non-terminal project exists — active,
+        # queued, awaiting approval, OR blocked. A blocked project is NOT
+        # abandoned for a new one: the swarm waits for the operator to fix +
+        # resume it (its milestones + workspace persist, so it continues
+        # from where it left off). New ideas only flow once every project is
+        # done or killed.
+        if await asyncio.to_thread(_swarm_has_work, tick._d.project_repo):
+            log.info("ideation.skip_has_work")
             return
-    log.info("ideation.exhausted", rounds=tick._d.settings.ideation_max_rounds)
+        for round_num in range(1, tick._d.settings.ideation_max_rounds + 1):
+            if await _ideate_round(tick, idea_repo, round_num, log):
+                return
+        log.info("ideation.exhausted", rounds=tick._d.settings.ideation_max_rounds)
 
 
 def _swarm_has_work(project_repo: ProjectRepo) -> bool:
