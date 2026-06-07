@@ -33,6 +33,7 @@ from claude_agent_sdk import (
     ClaudeSDKClient,
     HookMatcher,
     Message,
+    ProcessError,
     ResultMessage,
     TextBlock,
     ThinkingBlock,
@@ -315,6 +316,51 @@ class ClaudeAgentSDKTool:
     ) -> SDKResult:
         prev = self._session_repo.latest_for(milestone.id, self.role)
         resume = prev.session_id if prev else None
+        try:
+            return await self._arun_session(
+                milestone,
+                workspace,
+                max_turns=max_turns,
+                max_budget_usd=max_budget_usd,
+                repair_context=repair_context,
+                resume=resume,
+            )
+        except ProcessError as exc:
+            # A RESUMED call failed at the process level. The most likely cause
+            # is a missing/stale CLI session — `claude --resume <id>` prints
+            # "No conversation found with session ID" and exits 1 — because the
+            # CLI session store was wiped on a restart, expired, or was written
+            # by a different CLI version, while the DB still points at it. Don't
+            # block the milestone forever: retry ONCE with a FRESH session. (No
+            # fallback if there was no resume to blame.)
+            if resume is None:
+                raise
+            self._log.warning(
+                "sdk.resume_failed_retry_fresh",
+                role=self.role,
+                milestone=str(milestone.id),
+                exit_code=exc.exit_code,
+                error=str(exc)[:200],
+            )
+            return await self._arun_session(
+                milestone,
+                workspace,
+                max_turns=max_turns,
+                max_budget_usd=max_budget_usd,
+                repair_context=repair_context,
+                resume=None,
+            )
+
+    async def _arun_session(
+        self,
+        milestone: Milestone,
+        workspace: Workspace,
+        *,
+        max_turns: int,
+        max_budget_usd: float,
+        repair_context: str | None,
+        resume: str | None,
+    ) -> SDKResult:
         options = self.build_options(
             milestone,
             workspace,

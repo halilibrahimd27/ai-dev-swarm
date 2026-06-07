@@ -525,3 +525,62 @@ async def test_arun_handles_stream_with_no_result_message(
     result = await tool._arun(ms, ws, max_turns=10, max_budget_usd=1.0)
     assert result.success is False
     assert result.failure_reason == "no_result_message"
+
+
+@pytest.mark.asyncio
+async def test_arun_falls_back_to_fresh_session_when_resume_fails(tmp_path: Path) -> None:
+    """A stale CLI session makes `claude --resume <id>` exit 1 (ProcessError).
+    _arun must retry ONCE with a fresh session instead of failing forever."""
+    from claude_agent_sdk import ProcessError
+
+    repo = FakeMilestoneSessionRepo()
+    ms = _milestone()
+    # A prior session row exists -> _arun passes resume=<id> on the first try.
+    repo.record(
+        milestone_id=ms.id, role="Developer", session_id="dead-session", cost_usd=0.1, turns=1
+    )
+    tool = ClaudeAgentSDKDeveloperTool(Settings(), repo)
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+
+    seen: list[str | None] = []
+    fresh_ok = SDKResult(success=True, session_id="fresh", cost_usd=0.0, turns=1, summary="ok")
+
+    async def _fake_session(
+        milestone, workspace, *, max_turns, max_budget_usd, repair_context, resume
+    ):  # type: ignore[no-untyped-def]
+        seen.append(resume)
+        if resume is not None:
+            raise ProcessError("Command failed", exit_code=1, stderr="No conversation found")
+        return fresh_ok
+
+    tool._arun_session = _fake_session  # type: ignore[assignment]
+    result = await tool._arun(ms, ws, max_turns=10, max_budget_usd=1.0)
+    assert result is fresh_ok
+    assert seen == ["dead-session", None]  # tried resume, then fell back to fresh
+
+
+@pytest.mark.asyncio
+async def test_arun_propagates_process_error_when_there_was_no_resume(tmp_path: Path) -> None:
+    """With no prior session there's nothing to blame for the ProcessError, so
+    it propagates (the pool's transient backoff then handles it)."""
+    from claude_agent_sdk import ProcessError
+
+    repo = FakeMilestoneSessionRepo()  # empty -> resume is None
+    ms = _milestone()
+    tool = ClaudeAgentSDKDeveloperTool(Settings(), repo)
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+
+    calls = {"n": 0}
+
+    async def _fake_session(
+        milestone, workspace, *, max_turns, max_budget_usd, repair_context, resume
+    ):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        raise ProcessError("boom", exit_code=1)
+
+    tool._arun_session = _fake_session  # type: ignore[assignment]
+    with pytest.raises(ProcessError):
+        await tool._arun(ms, ws, max_turns=10, max_budget_usd=1.0)
+    assert calls["n"] == 1  # no fallback attempt when there was no resume
