@@ -26,6 +26,7 @@ from aidevswarm.schemas import (
     ProjectState,
     ScoredIdea,
 )
+from aidevswarm.schemas.state_machine import assert_legal_milestone
 from aidevswarm.tools import Sandbox, SandboxRun, Workspace
 
 # ---------------------------------------------------------------------------
@@ -128,6 +129,7 @@ class InMemoryMilestoneRepo:
 
     def update_state(self, milestone_id: UUID, new_state: MilestoneState) -> Milestone:
         existing = self.rows[milestone_id]
+        assert_legal_milestone(existing.state, new_state)  # mirror the real repo's guard
         updated = existing.model_copy(update={"state": new_state, "updated_at": utc_now()})
         self.rows[milestone_id] = updated
         return updated
@@ -141,6 +143,7 @@ class InMemoryMilestoneRepo:
     ) -> Milestone:
         existing = self.rows[milestone_id]
         new_state = MilestoneState.DONE if success else MilestoneState.FAILED
+        assert_legal_milestone(existing.state, new_state)  # mirror the real repo's guard
         new_retry = existing.retry_count + (0 if success else 1)
         updated = existing.model_copy(
             update={

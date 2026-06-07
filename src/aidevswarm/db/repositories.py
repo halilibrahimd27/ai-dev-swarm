@@ -27,6 +27,7 @@ from aidevswarm.schemas import (
     ProjectSpec,
     ProjectState,
 )
+from aidevswarm.schemas.state_machine import assert_legal_milestone
 
 
 def _project_from_row(row: dict[str, Any]) -> Project:
@@ -213,7 +214,13 @@ class PsycopgMilestoneRepo:
             return _milestone_from_row(row) if row else None
 
     def update_state(self, milestone_id: UUID, new_state: MilestoneState) -> Milestone:
-        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        with (
+            self._pool.connection() as conn,
+            conn.transaction(),
+            conn.cursor(row_factory=dict_row) as cur,
+        ):
+            current = self._lock_current_state(cur, milestone_id)
+            assert_legal_milestone(current, new_state)
             cur.execute(
                 """
                 UPDATE milestones SET state = %s, updated_at = %s
@@ -222,8 +229,7 @@ class PsycopgMilestoneRepo:
                 (new_state.value, utc_now(), str(milestone_id)),
             )
             row = cur.fetchone()
-            if row is None:
-                raise LookupError(f"milestone {milestone_id} not found")
+            assert row is not None  # locked above; guaranteed present
             return _milestone_from_row(row)
 
     def record_attempt(
@@ -234,7 +240,17 @@ class PsycopgMilestoneRepo:
         commit_hash: str | None,
     ) -> Milestone:
         new_state = MilestoneState.DONE if success else MilestoneState.FAILED
-        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        with (
+            self._pool.connection() as conn,
+            conn.transaction(),
+            conn.cursor(row_factory=dict_row) as cur,
+        ):
+            current = self._lock_current_state(cur, milestone_id)
+            # Guard the transition (e.g. a done milestone must never be flipped
+            # back to failed). PENDING/FAILED -> FAILED (the circuit-breaker
+            # records a failed attempt before BUILDING) and BUILDING ->
+            # DONE/FAILED are all legal per MILESTONE_TRANSITIONS.
+            assert_legal_milestone(current, new_state)
             cur.execute(
                 """
                 UPDATE milestones
@@ -254,9 +270,23 @@ class PsycopgMilestoneRepo:
                 ),
             )
             row = cur.fetchone()
-            if row is None:
-                raise LookupError(f"milestone {milestone_id} not found")
+            assert row is not None  # locked above; guaranteed present
             return _milestone_from_row(row)
+
+    @staticmethod
+    def _lock_current_state(cur: Any, milestone_id: UUID) -> MilestoneState:
+        """Lock the milestone row and return its current state.
+
+        ``FOR UPDATE`` holds the row for the rest of the transaction so the
+        legality check + the write are atomic (no transition races in)."""
+        cur.execute(
+            "SELECT state FROM milestones WHERE id = %s FOR UPDATE",
+            (str(milestone_id),),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise LookupError(f"milestone {milestone_id} not found")
+        return MilestoneState(row["state"])
 
     def requeue_stale_building(self) -> int:
         """Reset milestones stuck in ``building`` back to ``pending``.

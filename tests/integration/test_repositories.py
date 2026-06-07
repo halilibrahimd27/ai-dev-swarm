@@ -151,19 +151,35 @@ def test_milestone_update_state_and_record_attempt(
 ) -> None:
     mrepo = PsycopgMilestoneRepo(live_pool)
     [m] = mrepo.create_many(project.id, [_ms_spec("solo")])
-    started = mrepo.update_state(m.id, MilestoneState.BUILDING)
+    started = mrepo.update_state(m.id, MilestoneState.BUILDING)  # PENDING -> BUILDING
     assert started.state is MilestoneState.BUILDING
 
     # Failure path bumps retry_count, keeps milestone in failed.
-    failed = mrepo.record_attempt(m.id, success=False, commit_hash=None)
+    failed = mrepo.record_attempt(m.id, success=False, commit_hash=None)  # BUILDING -> FAILED
     assert failed.state is MilestoneState.FAILED
     assert failed.retry_count == 1
 
-    # Success path locks commit_hash + retry_count unchanged.
+    # Retry then succeed: FAILED -> BUILDING -> DONE (the legal sequence).
+    mrepo.update_state(m.id, MilestoneState.BUILDING)
     succeeded = mrepo.record_attempt(m.id, success=True, commit_hash="deadbeef")
     assert succeeded.state is MilestoneState.DONE
     assert succeeded.commit_hash == "deadbeef"
     assert succeeded.retry_count == 1
+
+
+def test_milestone_illegal_transition_is_rejected(
+    live_pool: ConnectionPool, project: Project
+) -> None:
+    """The repo enforces the milestone state machine: a done milestone must
+    never be flipped back to failed (the guard's whole reason to exist)."""
+    from aidevswarm.schemas.state_machine import IllegalTransition
+
+    mrepo = PsycopgMilestoneRepo(live_pool)
+    [m] = mrepo.create_many(project.id, [_ms_spec("guarded")])
+    mrepo.update_state(m.id, MilestoneState.BUILDING)
+    mrepo.record_attempt(m.id, success=True, commit_hash="x")  # -> DONE (terminal)
+    with pytest.raises(IllegalTransition):
+        mrepo.record_attempt(m.id, success=False, commit_hash=None)  # DONE -> FAILED
 
 
 def test_requeue_stale_building_recovers_orphaned_milestone(
@@ -173,7 +189,8 @@ def test_requeue_stale_building_recovers_orphaned_milestone(
     mrepo = PsycopgMilestoneRepo(live_pool)
     [a, b] = mrepo.create_many(project.id, [_ms_spec("orphan"), _ms_spec("done-one")])
     mrepo.update_state(a.id, MilestoneState.BUILDING)  # simulate a crash mid-build
-    mrepo.record_attempt(b.id, success=True, commit_hash="x")  # b is done
+    mrepo.update_state(b.id, MilestoneState.BUILDING)  # b builds...
+    mrepo.record_attempt(b.id, success=True, commit_hash="x")  # ...and is done
 
     # Before: next_pending skips the orphaned `building` milestone entirely.
     assert mrepo.next_pending(project.id) is None
