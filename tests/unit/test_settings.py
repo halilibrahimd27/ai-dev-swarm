@@ -17,7 +17,9 @@ def test_defaults_are_sane(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.require_approval is True
     assert settings.ideation_min_score == 80
     assert settings.ideation_max_rounds == 5
-    assert settings.sandbox_mode == "docker"
+    # subprocess is the shipped default: the orchestrator container has no
+    # Docker socket, so "docker" mode would fail-closed there.
+    assert settings.sandbox_mode == "subprocess"
 
 
 def test_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -81,7 +83,21 @@ def test_redact_patterns_default_covers_common_secrets() -> None:
     assert "eyJ" in joined  # JWT prefix
 
 
-def test_redact_patterns_csv_override() -> None:
-    """Operators can replace the default list via env var."""
-    s = Settings(AIDEVSWARM_REDACT_PATTERNS="foo,bar")
+def test_redact_patterns_newline_override() -> None:
+    """Operators replace the default list via one regex per line."""
+    s = Settings(AIDEVSWARM_REDACT_PATTERNS="foo\nbar")
     assert s.redact_patterns == ["foo", "bar"]
+
+
+def test_redact_patterns_json_array_override() -> None:
+    """A JSON array is accepted (the documented multi-pattern form)."""
+    s = Settings(AIDEVSWARM_REDACT_PATTERNS='["foo", "bar"]')
+    assert s.redact_patterns == ["foo", "bar"]
+
+
+def test_redact_patterns_with_comma_quantifier_survives() -> None:
+    """A regex with a {n,} quantifier must NOT be shredded (the fail-open
+    bug): commas inside quantifiers used to split one pattern into two
+    invalid fragments that the redactor silently dropped."""
+    s = Settings(AIDEVSWARM_REDACT_PATTERNS=r"mycorp-[A-Za-z0-9]{32,}")
+    assert s.redact_patterns == [r"mycorp-[A-Za-z0-9]{32,}"]

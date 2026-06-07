@@ -112,11 +112,11 @@ services:
     volumes:
       - ../workspaces:/workspace/workspaces
     ports:
-      # Docker publishes the host's loopback port to the container's
-      # 0.0.0.0:8080. Uvicorn binds 127.0.0.1 inside the container —
-      # Settings._enforce_loopback (Phase 5) refuses anything else.
-      # NOTE: docker's `127.0.0.1:`-prefixed publish syntax binds the
-      # host port to localhost only (NOT the LAN).
+      # Uvicorn binds 0.0.0.0 INSIDE the container (AIDEVSWARM_API_HOST
+      # above) so this publish line can reach it. The loopback guarantee
+      # is at the docker layer: the `127.0.0.1:`-prefixed publish syntax
+      # binds the HOST port to localhost only (NOT the LAN). Settings.
+      # _enforce_loopback accepts 0.0.0.0 for exactly this container case.
       - "127.0.0.1:${AIDEVSWARM_API_PORT:-8080}:8080"
     restart: unless-stopped
     healthcheck:

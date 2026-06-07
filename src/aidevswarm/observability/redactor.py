@@ -29,7 +29,26 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
+from aidevswarm.logging_config import get_logger
+
 _REDACTION = "[REDACTED:{kind}]"
+_log = get_logger(__name__)
+
+
+# (substring(s) found in the pattern) -> operator-readable kind tag. Ordered:
+# the first group with a matching substring wins, so more-specific shapes
+# (sk-ant, akia) precede the generic ones (sk-).
+_KIND_NEEDLES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("sk-ant",), "anthropic"),
+    (("ghp_", "github_pat"), "github"),
+    (("xoxb",), "slack"),
+    (("eyj",), "jwt"),
+    (("akia", "aws_secret"), "aws"),
+    (("bearer",), "bearer"),
+    (("://",), "dsn"),
+    (("password",), "password"),
+    (("sk-",), "openai"),
+)
 
 
 def _kind_from_pattern(pat: str) -> str:
@@ -40,16 +59,9 @@ def _kind_from_pattern(pat: str) -> str:
     token?). Keep it short and stable.
     """
     p = pat.lower()
-    if "sk-ant" in p:
-        return "anthropic"
-    if "ghp_" in p or "github_pat" in p:
-        return "github"
-    if "xoxb" in p:
-        return "slack"
-    if "eyj" in p:
-        return "jwt"
-    if "sk-" in p:
-        return "openai"
+    for needles, kind in _KIND_NEEDLES:
+        if any(n in p for n in needles):
+            return kind
     if ":" in p and "0-9" in p:
         return "telegram"
     return "secret"
@@ -65,10 +77,13 @@ class SecretRedactor:
         for raw in patterns:
             try:
                 rx = re.compile(raw)
-            except re.error:
+            except re.error as exc:
                 # A bad pattern in the operator's config must NEVER
                 # take the control plane down. Skip it; the operator
-                # sees the others still working.
+                # sees the others still working. WARN so the dropped
+                # pattern (a fail-OPEN for that secret shape) is visible
+                # rather than silently disabled.
+                _log.warning("redactor.pattern_skipped", error=str(exc))
                 continue
             compiled.append((rx, _REDACTION.format(kind=_kind_from_pattern(raw))))
         self._patterns: tuple[tuple[re.Pattern[str], str], ...] = tuple(compiled)

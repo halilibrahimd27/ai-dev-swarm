@@ -6,6 +6,7 @@ object is constructed once at startup and passed by reference.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -20,7 +21,29 @@ _DEFAULT_REDACT_PATTERNS: tuple[str, ...] = (
     r"xoxb-[A-Za-z0-9-]{20,}",  # Slack bot token
     r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b",  # JWT
     r"\b[0-9]{8,}:[A-Za-z0-9_-]{30,}\b",  # Telegram bot token (digits:secret)
+    r"\bAKIA[0-9A-Z]{16}\b",  # AWS access key id
+    # AWS secret key (context-anchored to avoid base64 false positives)
+    r"(?i)aws_secret_access_key\s*[=:]\s*[A-Za-z0-9/+=]{20,}",
+    # Credentialed connection strings — redact the WHOLE DSN (host + creds);
+    # only fires when a user:pass@ is embedded (our own PG/Redis password).
+    r"(?i)(?:postgres(?:ql)?|redis|amqp|mongodb)://[^\s:@/]*:[^\s@/]+@\S+",
+    r"(?i)bearer\s+[A-Za-z0-9._~+/=-]{20,}",  # Authorization: Bearer <token>
+    r"""(?i)password=[^\s&;'"]+""",  # generic password=... (query/env/DSN)
 )
+
+
+def _parse_redact_patterns(raw: str) -> list[str]:
+    """Parse ``AIDEVSWARM_REDACT_PATTERNS``: a JSON array, else one regex per
+    line. NEVER comma-split (regex quantifiers contain commas)."""
+    s = raw.strip()
+    if s.startswith("["):
+        try:
+            parsed = json.loads(s)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            return [str(p) for p in parsed if str(p).strip()]
+    return [line.strip() for line in s.splitlines() if line.strip()]
 
 
 class Settings(BaseSettings):
@@ -214,15 +237,17 @@ class Settings(BaseSettings):
     #  - "docker"     runs the milestone's tests in an ephemeral,
     #    network-less container (most isolated — needs the host Docker
     #    socket + the sandbox image).
-    #  - "subprocess" installs the generated project into a throwaway uv
-    #    venv and runs ruff + mypy --strict + pytest in-process. Real
-    #    tests, no Docker socket needed; less isolated than "docker" but
-    #    the production default for the compose stack (the orchestrator
-    #    container has no socket).
+    #  - "subprocess" (DEFAULT) installs the generated project into a
+    #    throwaway uv venv and runs ruff + mypy --strict + pytest
+    #    in-process. Real tests, no Docker socket needed; less isolated
+    #    than "docker" but the only mode that works in the shipped
+    #    compose stack (the orchestrator container has no Docker socket,
+    #    so "docker" mode would fail-closed there). Opt into "docker"
+    #    only where the socket is mounted and the sandbox image exists.
     #  - "inmemory"   treats CI as pass WITHOUT running anything — last
     #    resort; quality then rests on the Reviewer alone.
     sandbox_mode: Literal["docker", "subprocess", "inmemory"] = Field(
-        default="docker", validation_alias="AIDEVSWARM_SANDBOX_MODE"
+        default="subprocess", validation_alias="AIDEVSWARM_SANDBOX_MODE"
     )
 
     # --- Observability (Arize Phoenix) ------------------------------------
@@ -306,11 +331,16 @@ class Settings(BaseSettings):
     @field_validator("redact_patterns", mode="before")
     @classmethod
     def _split_redact_patterns(cls, v: object) -> object:
+        # NEVER split on commas: regex quantifiers ({20,}, {8,16}) and
+        # character classes contain commas, so comma-splitting shreds real
+        # patterns into invalid fragments that the redactor then silently
+        # drops — i.e. a fail-OPEN that disables an operator's secret
+        # redaction. Accept a JSON array, else one pattern per line.
         if v is None or v == "":
             # Empty env var -> fall back to the default pattern set.
             return list(_DEFAULT_REDACT_PATTERNS)
         if isinstance(v, str):
-            return [p.strip() for p in v.split(",") if p.strip()]
+            return _parse_redact_patterns(v)
         return v
 
     @property
