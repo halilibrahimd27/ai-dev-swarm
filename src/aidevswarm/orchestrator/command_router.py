@@ -87,7 +87,9 @@ class CommandRouter:
     # If unset (defaults to a no-op), `ideate_now` returns a soft
     # error so the UI shows "wiring not available" rather than
     # silently swallowing the request.
-    ideate_runner: Callable[[], None] = field(default=lambda: None)
+    # Called with ``force``: when True the ideation runner bypasses its
+    # "one project at a time" skip guard and ideates anyway.
+    ideate_runner: Callable[[bool], None] = field(default=lambda _force=False: None)
     # Operator-editable operational settings. When both are wired,
     # `update_setting` validates + persists an override and applies it onto
     # the live Settings object. Unset (tests/Phase 5) => a soft error.
@@ -248,26 +250,27 @@ class CommandRouter:
         )
 
     def _ideate_now(self, cmd: IdeateNow) -> CommandResult:
-        """Fire-and-forget: schedule the ideation crew + return at once.
+        """Schedule the ideation crew + return at once.
 
-        Ideation runs ONE project at a time — `_run_ideation_once` self-skips
-        while any non-terminal project exists. Pre-check the same condition so
-        the operator gets honest feedback ("skipped, you have active work")
-        instead of a misleading "scheduled" toast that produces nothing.
+        Ideation runs ONE project at a time — it self-skips while a non-terminal
+        project exists. So if there's active work and the operator hasn't forced
+        it, ASK first (``requires_confirmation``); ``force=True`` then ideates
+        ANYWAY (queue another idea while the current build continues).
         """
-        if self._has_active_work():
-            self._log.info("router.ideate_now_skipped_has_work")
+        if self._has_active_work() and not cmd.force:
+            self._log.info("router.ideate_now_needs_confirm")
             return CommandResult(
                 ok=True,
                 intent=cmd.intent,
+                requires_confirmation=True,
                 detail=(
-                    "ideation skipped — a project is still active / awaiting approval / "
-                    "blocked. The swarm builds one project at a time: finish, approve or "
-                    "abort it first, or use 'New project' to queue an idea directly."
+                    "A project is still active / awaiting approval / blocked — the swarm "
+                    "normally builds one at a time. Ideate ANYWAY and add another idea to "
+                    "the backlog?"
                 ),
             )
         try:
-            self.ideate_runner()
+            self.ideate_runner(cmd.force)
         except Exception as exc:
             self._log.warning("router.ideate_now_failed", error=str(exc))
             return CommandResult(
@@ -275,11 +278,11 @@ class CommandRouter:
                 intent=cmd.intent,
                 detail=f"ideate_now scheduling failed: {exc}",
             )
-        self._log.info("router.ideate_now_scheduled")
+        self._log.info("router.ideate_now_scheduled", forced=cmd.force)
         return CommandResult(
             ok=True,
             intent=cmd.intent,
-            detail="ideation crew scheduled (watch transcript / Phoenix)",
+            detail="ideation crew scheduled (watch the transcript / Boardroom)",
         )
 
     def _has_active_work(self) -> bool:

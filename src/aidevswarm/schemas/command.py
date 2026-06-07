@@ -87,6 +87,10 @@ class IdeateNow(_Base):
     """
 
     intent: Literal["ideate_now"] = "ideate_now"
+    # When False (default) the orchestrator SKIPS ideation if a non-terminal
+    # project already exists (one project at a time). The operator can set
+    # force=True to ideate ANYWAY — see a new idea while a build continues.
+    force: bool = False
 
 
 class SubmitIdea(_Base):

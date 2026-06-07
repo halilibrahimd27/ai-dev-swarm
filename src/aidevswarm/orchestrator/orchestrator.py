@@ -231,11 +231,13 @@ async def _async_main() -> None:
     # so a dropped handle can be GC'd mid-run.
     background_tasks: set[Future[None]] = set()
 
-    def _trigger_ideation() -> None:
+    def _trigger_ideation(force: bool = False) -> None:
         # Called from a worker thread → schedule on the loop THREAD-SAFELY
         # (loop.create_task is not thread-safe and may not wake an idle loop).
+        # force=True (operator confirmed) bypasses the "one project at a time"
+        # skip so a new idea is produced even while a build continues.
         future = asyncio.run_coroutine_threadsafe(
-            _run_ideation_once(tick, idea_repo, log, lock=ideation_lock), loop
+            _run_ideation_once(tick, idea_repo, log, lock=ideation_lock, force=force), loop
         )
         background_tasks.add(future)
         future.add_done_callback(background_tasks.discard)
@@ -316,6 +318,7 @@ async def _run_ideation_once(
     log: Any,
     *,
     lock: asyncio.Lock | None = None,
+    force: bool = False,
 ) -> None:
     """Ideate (up to ``ideation_max_rounds``) until an idea clears the gate.
 
@@ -328,17 +331,18 @@ async def _run_ideation_once(
     ``lock`` (shared by the cron + the operator IdeateNow) makes the
     "is there already work?" guard and the project creation ATOMIC, so two
     concurrent triggers can't both pass the guard and queue two projects.
+    ``force`` (operator-confirmed) bypasses that guard to queue an extra idea
+    while a project is still in flight.
     """
     async with lock or asyncio.Lock():
-        # Never ideate while ANY non-terminal project exists — active,
-        # queued, awaiting approval, OR blocked. A blocked project is NOT
-        # abandoned for a new one: the swarm waits for the operator to fix +
-        # resume it (its milestones + workspace persist, so it continues
-        # from where it left off). New ideas only flow once every project is
-        # done or killed.
-        if await asyncio.to_thread(_swarm_has_work, tick._d.project_repo):
+        # Normally never ideate while ANY non-terminal project exists — active,
+        # queued, awaiting approval, OR blocked — the swarm runs one project at
+        # a time. ``force`` lets the operator override and add another idea.
+        if not force and await asyncio.to_thread(_swarm_has_work, tick._d.project_repo):
             log.info("ideation.skip_has_work")
             return
+        if force:
+            log.info("ideation.forced_despite_work")
         for round_num in range(1, tick._d.settings.ideation_max_rounds + 1):
             if await _ideate_round(tick, idea_repo, round_num, log):
                 return

@@ -289,33 +289,45 @@ def test_confirmed_reject_idea_is_a_log_only_acknowledgement() -> None:
 
 def test_ideate_now_calls_the_runner_and_returns_quickly() -> None:
     """The Phase-6 operator-triggered ideation fires + returns at once."""
-    fired: list[int] = []
+    fired: list[bool] = []
     router, _, _, _ = _make_router()
-    router.ideate_runner = lambda: fired.append(1)
+    router.ideate_runner = lambda force: fired.append(force)
     result = router.dispatch(IdeateNow())
     assert result.ok
-    assert fired == [1]
+    assert fired == [False]
     assert "scheduled" in result.detail
 
 
-def test_ideate_now_skips_with_honest_feedback_when_work_is_active() -> None:
+def test_ideate_now_asks_to_confirm_when_work_is_active() -> None:
     """Ideation runs ONE project at a time: with a non-terminal project around,
-    ideate_now must NOT fire the runner and must tell the operator it skipped
-    (instead of a misleading 'scheduled')."""
-    fired: list[int] = []
+    ideate_now must NOT fire the runner — it asks the operator to confirm."""
+    fired: list[bool] = []
     project = Project(name="p", spec=_spec(), state=ProjectState.BUILDING)
     router, _, _, _ = _make_router(project=project)
-    router.ideate_runner = lambda: fired.append(1)
+    router.ideate_runner = lambda force: fired.append(force)
     result = router.dispatch(IdeateNow())
     assert result.ok
-    assert fired == []  # runner NOT scheduled while work is active
-    assert "skipped" in result.detail
+    assert fired == []  # runner NOT scheduled — needs confirmation first
+    assert result.requires_confirmation is True
+    assert "anyway" in result.detail.lower()
+
+
+def test_ideate_now_force_ideates_despite_active_work() -> None:
+    """force=True (operator confirmed) bypasses the one-at-a-time guard."""
+    fired: list[bool] = []
+    project = Project(name="p", spec=_spec(), state=ProjectState.BUILDING)
+    router, _, _, _ = _make_router(project=project)
+    router.ideate_runner = lambda force: fired.append(force)
+    result = router.dispatch(IdeateNow(force=True))
+    assert result.ok
+    assert fired == [True]  # runner scheduled WITH force
+    assert "scheduled" in result.detail
 
 
 def test_ideate_now_returns_soft_error_when_runner_raises() -> None:
     """Runner errors must NOT crash the dispatcher — soft failure instead."""
 
-    def boom() -> None:
+    def boom(_force: bool) -> None:
         raise RuntimeError("ideation crew not wired in this build")
 
     router, _, _, _ = _make_router()
