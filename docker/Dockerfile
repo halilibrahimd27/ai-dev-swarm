@@ -38,6 +38,17 @@ RUN uv venv /opt/venv \
  || uv sync --no-dev
 
 # ---------------------------------------------------------------------------
+# Frontend build stage: compile the React + Vite SPA to static assets that
+# FastAPI serves from /workspace/frontend/dist (CSP: script-src 'self').
+FROM node:20-slim AS frontend
+
+WORKDIR /fe
+COPY frontend/package.json frontend/package-lock.json* /fe/
+RUN npm ci 2>/dev/null || npm install
+COPY frontend/ /fe/
+RUN npm run build
+
+# ---------------------------------------------------------------------------
 FROM python:${PYTHON_VERSION}-slim AS runtime
 
 ENV PATH="/opt/venv/bin:$PATH" \
@@ -71,9 +82,11 @@ COPY --from=builder /app/src /workspace/src
 # the migration scripts from ./alembic/. Both must be in the image.
 COPY alembic.ini /workspace/alembic.ini
 COPY alembic /workspace/alembic
-# Phase 5 static web UI served by FastAPI at "/". The orchestrator
-# resolves this path relative to src/aidevswarm/orchestrator/.
+# Web UI served by FastAPI at "/". The orchestrator resolves these paths
+# relative to src/aidevswarm/orchestrator/ and prefers the built React SPA
+# (frontend/dist) over the legacy static ui/ fallback.
 COPY ui /workspace/ui
+COPY --from=frontend /fe/dist /workspace/frontend/dist
 
 USER aidevswarm
 

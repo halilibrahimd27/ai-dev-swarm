@@ -1,0 +1,27 @@
+# Keep the build context lean + correct. The Dockerfile builds the venv and
+# the frontend FROM SOURCE, so build artifacts and caches must NOT leak in
+# (esp. frontend/node_modules, which would clobber the image's `npm ci`).
+.git
+.github
+.venv
+**/__pycache__
+**/*.pyc
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.hypothesis
+.import_linter_cache
+workspaces
+frontend/node_modules
+frontend/dist
+node_modules
+.DS_Store
+*.md
+!README.md
+docs
+.claude
+.devcontainer
+.mcp.json
+PROGRESS.md
+BLOCKERS.md
+OPERATOR_HANDBOOK.md

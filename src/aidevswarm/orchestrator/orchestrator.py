@@ -62,9 +62,12 @@ from aidevswarm.tools import (
 )
 from aidevswarm.tools.mcp_config import load_mcp_servers
 
-# The UI directory ships at the repo root; in the docker image it lands
-# at /workspace/ui via the Dockerfile.
-_UI_DIR = Path(__file__).resolve().parents[3] / "ui"
+# The web UI served by FastAPI at "/". Prefer the built React SPA
+# (frontend/dist) when present; fall back to the legacy static ui/ folder.
+# In the docker image both land under /workspace via the Dockerfile.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_FRONTEND_DIST = _REPO_ROOT / "frontend" / "dist"
+_UI_DIR = _FRONTEND_DIST if _FRONTEND_DIST.is_dir() else _REPO_ROOT / "ui"
 
 
 def _make_sandbox(settings: Settings) -> Sandbox:
