@@ -145,8 +145,14 @@ class ClaudeAgentSDKTool:
             self._arun(
                 milestone,
                 workspace,
-                max_turns=max_turns or self._settings.sdk_max_turns,
-                max_budget_usd=max_budget_usd or self._settings.sdk_max_budget_usd,
+                # Explicit None checks — `or` would silently replace an
+                # explicit 0 (a deliberate "no turns/budget") with the default.
+                max_turns=(max_turns if max_turns is not None else self._settings.sdk_max_turns),
+                max_budget_usd=(
+                    max_budget_usd
+                    if max_budget_usd is not None
+                    else self._settings.sdk_max_budget_usd
+                ),
                 repair_context=repair_context,
             )
         )
@@ -326,32 +332,18 @@ class ClaudeAgentSDKTool:
             if resume is not None:
                 span.set_attribute("aidevswarm.resume_session_id", resume)
 
-            final: ResultMessage | None = None
             async with ClaudeSDKClient(options=options) as client:
                 await client.query(
                     self.task_prompt(milestone, repair_context, resumed=resume is not None)
                 )
-                async for msg in client.receive_messages():
-                    # Stream the agent's turn-by-turn work to the live
-                    # transcript (the web UI) as it happens, not just the
-                    # final result. project_id lets the per-project SSE
-                    # filter route it to the right pane.
-                    self._publish_message(milestone.project_id, msg)
-                    if isinstance(msg, ResultMessage):
-                        final = msg
-                        break
+                final, last_session_id, partial_usage = await self._consume_stream(
+                    client, milestone, resume
+                )
 
             if final is None:
-                # Stream closed before a ResultMessage — treat as failure.
+                # Stream closed before a ResultMessage — persist partial work.
                 span.set_attribute("aidevswarm.error", "no_result_message")
-                return SDKResult(
-                    success=False,
-                    session_id=resume or "",
-                    cost_usd=0.0,
-                    turns=0,
-                    summary="SDK closed without a ResultMessage",
-                    failure_reason="no_result_message",
-                )
+                return self._no_result_outcome(milestone, last_session_id, partial_usage)
 
             span.set_attribute("aidevswarm.session_id", final.session_id)
             span.set_attribute("aidevswarm.cost_usd", float(final.total_cost_usd or 0.0))
@@ -368,33 +360,101 @@ class ClaudeAgentSDKTool:
             self._ledger_spend(milestone, final)
             return _result_from(final)
 
-    def _ledger_spend(self, milestone: Milestone, final: ResultMessage) -> None:
-        """Record the SDK call's spend for the budget guard + UI visibility.
+    async def _consume_stream(
+        self,
+        client: ClaudeSDKClient,
+        milestone: Milestone,
+        resume: str | None,
+    ) -> tuple[ResultMessage | None, str | None, dict[str, int]]:
+        """Drain the SDK stream: publish each message to the live transcript,
+        track the latest session id + accumulated usage (so a stream that
+        drops before its ResultMessage can still resume + ledger), and return
+        the closing ResultMessage (or None if the stream ended early)."""
+        final: ResultMessage | None = None
+        last_session_id: str | None = resume
+        partial_usage: dict[str, int] = {}
+        async for msg in client.receive_messages():
+            self._publish_message(milestone.project_id, msg)
+            if isinstance(msg, AssistantMessage):
+                if msg.session_id:
+                    last_session_id = msg.session_id
+                _accumulate_usage(partial_usage, msg.usage)
+            if isinstance(msg, ResultMessage):
+                final = msg
+                break
+        return final, last_session_id, partial_usage
 
-        The SDK reports an exact ``total_cost_usd``; token counts come
-        from ``usage`` (cache reads counted toward input so the throttle
-        sees real throughput). No-op when no recorder is wired.
+    def _no_result_outcome(
+        self,
+        milestone: Milestone,
+        last_session_id: str | None,
+        partial_usage: dict[str, int],
+    ) -> SDKResult:
+        """Stream closed before a ResultMessage. Persist whatever the agent
+        did: record the session so the NEXT attempt resumes instead of
+        restarting, and ledger the partial spend so the throttle accounts for
+        the tokens already burned."""
+        if last_session_id:
+            self._session_repo.record(
+                milestone_id=milestone.id,
+                role=self.role,
+                session_id=last_session_id,
+                cost_usd=0.0,
+                turns=0,
+            )
+        self._ledger_usage(milestone, partial_usage)
+        return SDKResult(
+            success=False,
+            session_id=last_session_id or "",
+            cost_usd=0.0,
+            turns=0,
+            summary="SDK closed without a ResultMessage",
+            failure_reason="no_result_message",
+        )
+
+    def _ledger_spend(self, milestone: Milestone, final: ResultMessage) -> None:
+        """Record a completed SDK call's spend (exact ``total_cost_usd``)."""
+        self._ledger_usage(
+            milestone, final.usage or {}, cost_usd=float(final.total_cost_usd or 0.0)
+        )
+
+    def _ledger_usage(
+        self,
+        milestone: Milestone,
+        usage: dict[str, Any],
+        *,
+        cost_usd: float | None = None,
+    ) -> None:
+        """Record token usage for the budget guard + UI visibility.
+
+        Used both for the closing ``ResultMessage`` (with its exact
+        ``total_cost_usd``) and for the partial-usage accumulated when a
+        stream drops before any ResultMessage (``cost_usd=None`` → the
+        recorder estimates from its price table). No-op when no recorder is
+        wired, or when there is genuinely nothing to record.
         """
         if self._recorder is None:
             return
-        usage = final.usage or {}
         # Count only NEW input + cache writes, NOT cache reads. Over a
         # 40-turn session the same context is re-read every turn, so
         # cache_read balloons into the millions — counting it would trip
         # the per-milestone token cap before auto-split could even bisect
         # the milestone. Cache reads are also ~0.1x cost; the exact
-        # dollar figure still comes from total_cost_usd below.
+        # dollar figure still comes from total_cost_usd when present.
         prompt_tokens = int(usage.get("input_tokens", 0) or 0) + int(
             usage.get("cache_creation_input_tokens", 0) or 0
         )
+        completion_tokens = int(usage.get("output_tokens", 0) or 0)
+        if cost_usd is None and prompt_tokens == 0 and completion_tokens == 0:
+            return  # nothing was spent (or nothing observable) — skip the row
         self._recorder.record(
             project_id=milestone.project_id,
             milestone_id=milestone.id,
             role=self.role,
             model=self._model(milestone),
             prompt_tokens=prompt_tokens,
-            completion_tokens=int(usage.get("output_tokens", 0) or 0),
-            cost_usd=float(final.total_cost_usd or 0.0),
+            completion_tokens=completion_tokens,
+            cost_usd=cost_usd,
         )
 
     # ------------------------------------------------------------------
@@ -506,6 +566,26 @@ class ClaudeAgentSDKTesterTool(ClaudeAgentSDKTool):
 # ----------------------------------------------------------------------
 # Helpers used by tests
 # ----------------------------------------------------------------------
+
+
+def _accumulate_usage(acc: dict[str, int], usage: dict[str, Any] | None) -> None:
+    """Add one streamed message's per-turn token usage into ``acc``.
+
+    Each :class:`AssistantMessage` carries its own turn's ``usage``; summing
+    them gives the partial spend if the stream drops before a ResultMessage.
+    Defensive: ignores a missing/odd-shaped ``usage`` rather than raising.
+    """
+    if not isinstance(usage, dict):
+        return
+    for key in (
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+    ):
+        value = usage.get(key)
+        if isinstance(value, int | float):
+            acc[key] = acc.get(key, 0) + int(value)
 
 
 def _short(text: str, limit: int) -> str:
