@@ -42,6 +42,11 @@ def open_pool(settings: Settings) -> ConnectionPool:
             max_size=settings.pg_pool_max,
             timeout=float(settings.pg_pool_timeout),
             max_lifetime=float(settings.pg_pool_max_lifetime),
+            # Pin every session to UTC so `created_at::date` and `now()` bucket
+            # on the SAME UTC day everywhere — otherwise the daily-spend
+            # queries (which compare created_at::date against a UTC date)
+            # misalign under a non-UTC server/session timezone.
+            kwargs={"options": "-c timezone=UTC"},
             open=True,
         )
         # Wait for the pool to actually have at least one usable

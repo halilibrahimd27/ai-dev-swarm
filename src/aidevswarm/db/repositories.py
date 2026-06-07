@@ -301,8 +301,10 @@ class PsycopgMilestoneRepo:
     def update_spec(self, milestone_id: UUID, patch: dict[str, Any]) -> Milestone:
         """Apply ``patch`` to the milestone's spec (Phase 4 Amend).
 
-        Unknown keys are rejected by ``MilestoneSpec.model_copy(update=)``
-        because the schema has ``extra='forbid'``.
+        Unknown/mistyped patch keys are REJECTED (raises pydantic
+        ``ValidationError``). NOTE: ``model_copy(update=)`` does NOT validate —
+        it silently swallows unknown keys — so the merged dict is run through
+        full ``model_validate`` (which enforces ``extra='forbid'``) instead.
         """
         with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM milestones WHERE id = %s", (str(milestone_id),))
@@ -310,7 +312,7 @@ class PsycopgMilestoneRepo:
             if current is None:
                 raise LookupError(f"milestone {milestone_id} not found")
             existing_spec = MilestoneSpec.model_validate(current["spec"])
-            new_spec = existing_spec.model_copy(update=patch)
+            new_spec = MilestoneSpec.model_validate({**existing_spec.model_dump(), **patch})
             cur.execute(
                 """
                 UPDATE milestones SET spec = %s, updated_at = %s

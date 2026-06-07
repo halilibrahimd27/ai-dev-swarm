@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from aidevswarm.orchestrator.auto_split import AutoSplitPredictor
 from aidevswarm.orchestrator.tick import Tick, TickDeps
@@ -159,6 +160,28 @@ def test_replanner_amend_patches_milestone_spec_and_returns_to_building(
     assert after[first.id].spec.description == "rewritten by replanner"
     snapshot = project_repo.get(project.id)
     assert snapshot is not None and snapshot.state is ProjectState.BUILDING
+
+
+def test_update_spec_rejects_unknown_patch_keys(tmp_path: Path) -> None:
+    """A mistyped/unknown Amend patch key is REJECTED, not silently dropped.
+
+    ``model_copy(update=)`` bypasses validation and swallowed unknown keys;
+    ``update_spec`` now runs full ``model_validate`` so ``extra='forbid'``
+    fires. The existing spec must be left untouched on rejection.
+    """
+    crew = FakeReplanningCrew()
+    tick, project_repo, milestone_repo, _ = _build_deps(tmp_path, crew, build_succeed=False)
+    project = project_repo.create(_project("amend-reject"))
+    tick.advance_one_step()  # QUEUED -> PLANNING
+    tick.advance_one_step()  # PLANNING -> BUILDING (2 milestones)
+    first, _second = milestone_repo.list_for_project(project.id)
+
+    with pytest.raises(ValidationError):
+        milestone_repo.update_spec(first.id, {"nonexistent_field": "x"})
+
+    # The spec is unchanged — the rejected patch had no effect.
+    after = {m.id: m for m in milestone_repo.list_for_project(project.id)}
+    assert after[first.id].spec == first.spec
 
 
 def test_clean_milestone_success_skips_the_llm_replanner(tmp_path: Path) -> None:

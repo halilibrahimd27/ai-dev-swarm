@@ -173,7 +173,10 @@ class InMemoryMilestoneRepo:
 
     def update_spec(self, milestone_id: UUID, patch: dict[str, Any]) -> Milestone:
         existing = self.rows[milestone_id]
-        new_spec = existing.spec.model_copy(update=patch)
+        # Mirror PsycopgMilestoneRepo: full model_validate so an unknown/
+        # mistyped patch key is REJECTED (model_copy(update=) would silently
+        # swallow it, hiding the bug the fake is supposed to exercise).
+        new_spec = MilestoneSpec.model_validate({**existing.spec.model_dump(), **patch})
         updated = existing.model_copy(update={"spec": new_spec, "updated_at": utc_now()})
         self.rows[milestone_id] = updated
         return updated
@@ -494,7 +497,10 @@ class FakeMilestoneSessionRepo:
         candidates = [r for r in self.rows if r.milestone_id == milestone_id and r.role == role]
         if not candidates:
             return None
-        return max(candidates, key=lambda r: r.finished_at)
+        # Mirror the real SQL's `ORDER BY finished_at DESC, id DESC`: on a
+        # finished_at TIE, the higher id (newer insert) wins. Plain
+        # max(key=finished_at) returned the OLDER row on a tie.
+        return max(candidates, key=lambda r: (r.finished_at, r.id))
 
 
 @dataclass
