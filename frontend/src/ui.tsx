@@ -75,9 +75,15 @@ export function Sparkline({ values, height = 86 }: { values: number[]; height?: 
   const last = pts[pts.length - 1];
   return (
     <svg className="spark" viewBox={`0 0 ${w} ${height}`} preserveAspectRatio="none">
-      <path className="area" d={area} />
+      <defs>
+        <linearGradient id="spark-grad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--accent-2)" stopOpacity="0.4" />
+          <stop offset="100%" stopColor="var(--accent-2)" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill="url(#spark-grad)" />
       <path className="line" d={line} vectorEffect="non-scaling-stroke" />
-      {last && <circle className="pt" cx={last[0]} cy={last[1]} r={1.6} />}
+      {last && <circle className="pt" cx={last[0]} cy={last[1]} r={1.8} vectorEffect="non-scaling-stroke" />}
     </svg>
   );
 }

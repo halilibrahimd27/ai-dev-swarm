@@ -40,26 +40,11 @@ export function Dashboard({ actions }: { actions: Actions }) {
       </div>
 
       <div className="stats">
-        <div className="stat card">
-          <span className="label">Projects</span>
-          <span className="num">{total}</span>
-        </div>
-        <div className="stat card accent">
-          <span className="label">In flight</span>
-          <span className="num">{inflight}</span>
-        </div>
-        <div className="stat card">
-          <span className="label">Awaiting approval</span>
-          <span className="num">{awaiting}</span>
-        </div>
-        <div className={cls("stat card", blocked > 0 && "danger")}>
-          <span className="label">Blocked</span>
-          <span className="num">{blocked}</span>
-        </div>
-        <div className="stat card">
-          <span className="label">Spend today</span>
-          <span className="num">{money(sp?.daily_cost_usd ?? 0)}</span>
-        </div>
+        <StatTile ic="▦" label="Projects" value={total} />
+        <StatTile ic="⚡" label="In flight" value={inflight} tone="accent" />
+        <StatTile ic="⏳" label="Awaiting approval" value={awaiting} tone={awaiting > 0 ? "warn" : undefined} />
+        <StatTile ic="■" label="Blocked" value={blocked} tone={blocked > 0 ? "danger" : undefined} />
+        <StatTile ic="$" label="Spend today" value={money(sp?.daily_cost_usd ?? 0)} tone="ok" />
       </div>
 
       {showForm && <NewProjectForm actions={actions} onClose={() => setShowForm(false)} />}
@@ -118,6 +103,28 @@ export function Dashboard({ actions }: { actions: Actions }) {
         {!cards.length && !dash.loading && (
           <div className="empty">No projects yet — “Ideate now” or “New project”.</div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function StatTile({
+  ic,
+  label,
+  value,
+  tone,
+}: {
+  ic: string;
+  label: string;
+  value: number | string;
+  tone?: "accent" | "warn" | "danger" | "ok";
+}) {
+  return (
+    <div className={cls("stat card", tone)}>
+      <span className={cls("stat-ic", tone)}>{ic}</span>
+      <div className="stat-body">
+        <span className="num">{value}</span>
+        <span className="label">{label}</span>
       </div>
     </div>
   );
