@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { Actions } from "../App";
 import { usePoll, useTranscript } from "../hooks";
-import { StatePill, cls, clock, initials, money } from "../ui";
+import { StatTile, StatePill, cls, clock, initials, money, roleColor } from "../ui";
 
 const MARK: Record<string, string> = { done: "✓", building: "•", failed: "!", pending: "" };
 
@@ -33,6 +33,10 @@ export function ProjectView({ projectId, actions }: { projectId: string | null; 
   const p = detail.data?.project;
   const milestones = detail.data?.milestones ?? [];
   const spend = detail.data?.spend;
+  const pct = spend && spend.total > 0 ? Math.round((spend.done / spend.total) * 100) : 0;
+  const remaining =
+    spend && spend.projected_total != null ? Math.max(0, spend.projected_total - spend.cost_so_far) : null;
+  const building = milestones.find((m) => m.state === "building");
 
   const steer = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,9 +55,9 @@ export function ProjectView({ projectId, actions }: { projectId: string | null; 
       <div className="view-head">
         <div>
           <h1>{p?.name ?? "…"}</h1>
-          <div className="row" style={{ gap: 8, marginTop: 4 }}>
+          <div className="row" style={{ gap: 8, marginTop: 6 }}>
             {p && <StatePill state={p.state} />}
-            <span className="view-sub" style={{ margin: 0 }}>{p?.status_detail}</span>
+            <span style={{ color: "var(--muted)", fontSize: 13 }}>{p?.status_detail}</span>
           </div>
         </div>
         <div className="row">
@@ -66,17 +70,16 @@ export function ProjectView({ projectId, actions }: { projectId: string | null; 
         </div>
       </div>
 
-      {spend && (
-        <div className="row" style={{ gap: 16, marginBottom: 12, color: "var(--muted)", fontSize: 13 }}>
-          <span>{money(spend.cost_so_far)} spent</span>
-          <span>·</span>
-          <span>~{money(spend.projected_total)} projected</span>
-          <span>·</span>
-          <span>{spend.done}/{spend.total} milestones</span>
-        </div>
-      )}
+      {/* Prominent project economics — spent + projected finish cost. */}
+      <div className="stats">
+        <StatTile ic="$" label="Spent so far" value={money(spend?.cost_so_far ?? 0)} tone="accent" />
+        <StatTile ic="◴" label="Projected total" value={spend?.projected_total != null ? money(spend.projected_total) : "—"} tone="warn" sub="at recent per-milestone rate" />
+        <StatTile ic="→" label="Est. remaining" value={remaining != null ? money(remaining) : "—"} tone="ok" sub="to finish" />
+        <StatTile ic="▦" label="Progress" value={`${spend?.done ?? 0}/${spend?.total ?? 0}`} sub={`${pct}% complete`} />
+      </div>
 
-      <ol className="timeline">
+      <div className="section-title">Milestones {building && <span className="hint">building: {building.title}</span>}</div>
+      <ol className="timeline card">
         {milestones.map((m) => (
           <li key={m.id} className={cls("tl", "m-" + m.state)}>
             <span className="tlmark">{MARK[m.state] ?? ""}</span>
@@ -85,41 +88,56 @@ export function ProjectView({ projectId, actions }: { projectId: string | null; 
             <span className="tlstate">{m.state}</span>
           </li>
         ))}
+        {!milestones.length && <div className="empty">No milestones yet — they appear once planning finishes.</div>}
       </ol>
 
-      <div className="toolbar">
-        <div className="seg">
-          <button className={cls(mode === "clean" && "active")} onClick={() => setMode("clean")}>Conversation</button>
-          <button className={cls(mode === "technical" && "active")} onClick={() => setMode("technical")}>Technical</button>
-        </div>
-        <select className="input" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
-          <option value="">all roles</option>
-          {roles.map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
-        <label className="row" style={{ fontSize: 12.5, color: "var(--muted)", gap: 6 }}>
-          <input type="checkbox" checked={autoscroll} onChange={(e) => setAutoscroll(e.target.checked)} /> autoscroll
-        </label>
-        <span className="spacer" />
-        <span className="chip">{status === "open" ? "● streaming" : status === "connecting" ? "… connecting" : "○ idle"}</span>
+      <div className="section-title">
+        Transcript
+        <span className="hint">live agent conversation</span>
       </div>
-
-      <ol className={cls("stream", "mode-" + mode)}>
-        {shown.map((e) => (
-          <li key={e.id} className={cls("msg", "k-" + e.kind)}>
-            <span className="avatar" title={e.role}>{initials(e.role)}</span>
-            <div className="body">
-              <div className="mhead">
-                <span className="mrole">{e.role}</span>
-                <span className="mkind">{e.kind}</span>
-                <span className="mts">{clock(e.at)}</span>
+      <div className="card transcript-card">
+        <div className="toolbar" style={{ margin: 0, padding: "12px 16px", borderBottom: "1px solid var(--border-soft)" }}>
+          <div className="seg">
+            <button className={cls(mode === "clean" && "active")} onClick={() => setMode("clean")}>Conversation</button>
+            <button className={cls(mode === "technical" && "active")} onClick={() => setMode("technical")}>Technical</button>
+          </div>
+          <select className="input" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+            <option value="">all roles</option>
+            {roles.map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
+          <label className="row" style={{ fontSize: 12.5, color: "var(--muted)", gap: 6 }}>
+            <input type="checkbox" checked={autoscroll} onChange={(e) => setAutoscroll(e.target.checked)} /> autoscroll
+          </label>
+          <span className="spacer" />
+          <span className="chip">{shown.length} msgs</span>
+          <span className={cls("chip", status === "open" && "live")}>
+            <span className="dot" /> {status === "open" ? "streaming" : status === "connecting" ? "connecting" : "idle"}
+          </span>
+        </div>
+        <ol className={cls("stream", "mode-" + mode)} style={{ padding: 16, maxHeight: "56vh", overflowY: "auto" }}>
+          {shown.map((e) => (
+            <li key={e.id} className={cls("msg", "k-" + e.kind)}>
+              <span className="avatar" title={e.role} style={{ background: roleColor(e.role) }}>{initials(e.role)}</span>
+              <div className="body">
+                <div className="mhead">
+                  <span className="mrole">{e.role}</span>
+                  <span className="mkind">{e.kind}</span>
+                  <span className="mts">{clock(e.at)}</span>
+                </div>
+                <div className="mtext">{e.text}</div>
               </div>
-              <div className="mtext">{e.text}</div>
+            </li>
+          ))}
+          {!shown.length && (
+            <div className="empty">
+              {status === "open"
+                ? "Connected — the agents will speak here as they work."
+                : "No messages yet."}
             </div>
-          </li>
-        ))}
-        {!shown.length && <div className="empty">No messages yet — the agents will speak as they work.</div>}
-        <div ref={endRef} />
-      </ol>
+          )}
+          <div ref={endRef} />
+        </ol>
+      </div>
 
       <div className="row" style={{ marginTop: 16, gap: 8 }}>
         <input className="input" style={{ flex: 1 }} placeholder="rescope this project…" value={scope} onChange={(e) => setScope(e.target.value)} />

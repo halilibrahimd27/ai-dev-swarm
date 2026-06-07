@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import type { Actions } from "../App";
 import { usePoll } from "../hooks";
-import { ProgressBar, Sparkline, StatePill, cls, money } from "../ui";
+import { ProgressBar, Sparkline, StatTile, StatePill, money } from "../ui";
 
 const INFLIGHT = new Set(["planning", "building", "replanning", "integration"]);
 
@@ -103,28 +103,6 @@ export function Dashboard({ actions }: { actions: Actions }) {
         {!cards.length && !dash.loading && (
           <div className="empty">No projects yet — “Ideate now” or “New project”.</div>
         )}
-      </div>
-    </div>
-  );
-}
-
-function StatTile({
-  ic,
-  label,
-  value,
-  tone,
-}: {
-  ic: string;
-  label: string;
-  value: number | string;
-  tone?: "accent" | "warn" | "danger" | "ok";
-}) {
-  return (
-    <div className={cls("stat card", tone)}>
-      <span className={cls("stat-ic", tone)}>{ic}</span>
-      <div className="stat-body">
-        <span className="num">{value}</span>
-        <span className="label">{label}</span>
       </div>
     </div>
   );

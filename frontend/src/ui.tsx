@@ -43,6 +43,40 @@ export function StatePill({ state }: { state: ProjectState | string }) {
   return <span className={cls("pill", "s-" + state)}>{state.replace(/_/g, " ")}</span>;
 }
 
+export type Tone = "accent" | "warn" | "danger" | "ok";
+
+export function StatTile({
+  ic,
+  label,
+  value,
+  tone,
+  sub,
+}: {
+  ic: string;
+  label: string;
+  value: number | string;
+  tone?: Tone;
+  sub?: string;
+}) {
+  return (
+    <div className={cls("stat card", tone)}>
+      <span className={cls("stat-ic", tone)}>{ic}</span>
+      <div className="stat-body">
+        <span className="num">{value}</span>
+        <span className="label">{label}</span>
+        {sub && <span className="sub">{sub}</span>}
+      </div>
+    </div>
+  );
+}
+
+/** Stable, distinct color per agent role — used for transcript avatars. */
+export function roleColor(role: string): string {
+  let h = 0;
+  for (let i = 0; i < role.length; i++) h = (h * 31 + role.charCodeAt(i)) % 360;
+  return `hsl(${h} 58% 56%)`;
+}
+
 export function ProgressBar({ done, total }: { done: number; total: number }) {
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   return (
