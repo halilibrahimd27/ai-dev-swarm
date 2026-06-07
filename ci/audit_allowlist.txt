@@ -34,3 +34,15 @@ CVE-2026-45829
 # used by GitHub Actions to read uv.lock; the user-facing host uv is
 # already 0.11.16. No production exposure.
 GHSA-4gg8-gxpx-9rph
+
+# pyjwt 2.12.1 — PYSEC-2026-175/177/178/179; fix in 2.13.0 but pyjwt is a
+# TRANSITIVE dep pinned <2.13 by crewai / mcp / redis (uv cannot resolve
+# 2.13.0 without those loosening their pins). ai-dev-swarm does NOT use JWT
+# for its own auth — the control plane uses a static bearer token compared
+# with hmac.compare_digest (api/server.py), not JWT — so we never verify an
+# untrusted JWT. No exposure surface in our usage. Revisit once crewai/mcp/
+# redis allow pyjwt 2.13.0.
+PYSEC-2026-175
+PYSEC-2026-177
+PYSEC-2026-178
+PYSEC-2026-179
