@@ -22,7 +22,9 @@ from tests.fakes import InMemoryProjectRepo
 
 @dataclass
 class _FakeSteering:
-    def add_note(self, project_id: UUID, body: str, *, author: str = "human") -> int:
+    def add_note(
+        self, project_id: UUID, body: str, *, author: str = "human", target_role: str | None = None
+    ) -> int:
         return 1
 
     def pull_unconsumed(self, project_id: UUID, role: str) -> list[str]:

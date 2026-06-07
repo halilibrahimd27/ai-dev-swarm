@@ -162,7 +162,11 @@ class CommandRouter:
         return CommandResult(ok=True, intent=cmd.intent, detail="approved")
 
     def _inject_note(self, cmd: InjectNote) -> CommandResult:
-        note_id = self.steering_repo.add_note(cmd.project_id, cmd.body, author=cmd.author)
+        # cmd.role: None == visible to ALL roles (delivered once to each);
+        # a concrete role restricts the note to that role. Previously dropped.
+        note_id = self.steering_repo.add_note(
+            cmd.project_id, cmd.body, author=cmd.author, target_role=cmd.role
+        )
         # Surface the operator's steer in the boardroom so the meeting shows
         # the human's input alongside the agents' decisions.
         publish_decision(

@@ -507,16 +507,24 @@ class FakeMilestoneSessionRepo:
 class FakeSteeringRepo:
     """In-memory :class:`aidevswarm.steering.protocols.SteeringRepo`.
 
-    Mirrors the production semantics: ``pull_unconsumed`` marks the
-    notes consumed in-place and returns each note exactly once for a
-    given (project, role) pair. Two pulls for the same role return
-    nothing on the second call.
+    Mirrors the production per-role delivery: a note is delivered exactly
+    once per role; a ``target_role`` of ``None`` reaches EVERY role once, a
+    concrete role restricts it to that role. Delivery is tracked per
+    (note_id, role) — NOT a single project-wide consumed flag.
     """
 
     rows: list[dict[str, object]] = field(default_factory=list)
+    _delivered: set[tuple[int, str]] = field(default_factory=set)
     _next_id: int = 1
 
-    def add_note(self, project_id: UUID, body: str, *, author: str = "human") -> int:
+    def add_note(
+        self,
+        project_id: UUID,
+        body: str,
+        *,
+        author: str = "human",
+        target_role: str | None = None,
+    ) -> int:
         note_id = self._next_id
         self._next_id += 1
         self.rows.append(
@@ -525,8 +533,7 @@ class FakeSteeringRepo:
                 "project_id": project_id,
                 "body": body,
                 "author": author,
-                "consumed_at": None,
-                "consumed_by": None,
+                "target_role": target_role,
             }
         )
         return note_id
@@ -534,8 +541,13 @@ class FakeSteeringRepo:
     def pull_unconsumed(self, project_id: UUID, role: str) -> list[str]:
         bodies: list[str] = []
         for row in self.rows:
-            if row["project_id"] == project_id and row["consumed_at"] is None:
+            note_id = int(row["id"])  # type: ignore[call-overload]
+            target = row["target_role"]
+            if (
+                row["project_id"] == project_id
+                and (target is None or target == role)
+                and (note_id, role) not in self._delivered
+            ):
                 bodies.append(str(row["body"]))
-                row["consumed_at"] = "now"
-                row["consumed_by"] = role
+                self._delivered.add((note_id, role))
         return bodies

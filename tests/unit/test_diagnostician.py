@@ -20,7 +20,9 @@ class _Steering:
     def __init__(self) -> None:
         self.notes: list[tuple[UUID, str, str]] = []
 
-    def add_note(self, project_id: UUID, body: str, *, author: str = "human") -> int:
+    def add_note(
+        self, project_id: UUID, body: str, *, author: str = "human", target_role: str | None = None
+    ) -> int:
         self.notes.append((project_id, body, author))
         return len(self.notes)
 

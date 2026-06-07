@@ -28,19 +28,30 @@ def test_pull_twice_returns_empty_second_time() -> None:
     assert repo.pull_unconsumed(pid, "PM") == []
 
 
-def test_each_role_consumes_independently_only_when_unconsumed() -> None:
-    """Once consumed by one role, a note is gone for everyone.
-
-    This matches the production semantics: the row's ``consumed_by`` is
-    a single attribution string. Multi-role broadcast is intentionally
-    NOT a feature of Phase 1; operators who want a note delivered to
-    every role can add it once per role.
-    """
+def test_broadcast_note_reaches_each_role_once() -> None:
+    """A note with no target_role (None) is delivered to EVERY role exactly
+    once — the documented "visible to all roles" semantic. Each role sees it
+    on its first pull and never again."""
     repo = FakeSteeringRepo()
     pid = uuid4()
-    repo.add_note(pid, "n")
-    assert repo.pull_unconsumed(pid, "Ideator") == ["n"]
-    assert repo.pull_unconsumed(pid, "PM") == []
+    repo.add_note(pid, "n")  # target_role defaults to None == all roles
+    assert repo.pull_unconsumed(pid, "Developer") == ["n"]
+    assert repo.pull_unconsumed(pid, "Tester") == ["n"]
+    assert repo.pull_unconsumed(pid, "Reviewer") == ["n"]
+    # ...but only once per role.
+    assert repo.pull_unconsumed(pid, "Developer") == []
+
+
+def test_targeted_note_only_reaches_its_role() -> None:
+    """A note addressed to one role is delivered to that role only — other
+    roles never see it (the role-targeting bug: it used to be consumed by
+    whichever role pulled first)."""
+    repo = FakeSteeringRepo()
+    pid = uuid4()
+    repo.add_note(pid, "for the reviewer only", target_role="Reviewer")
+    assert repo.pull_unconsumed(pid, "Developer") == []
+    assert repo.pull_unconsumed(pid, "Reviewer") == ["for the reviewer only"]
+    assert repo.pull_unconsumed(pid, "Reviewer") == []
 
 
 def test_per_project_isolation() -> None:

@@ -47,7 +47,9 @@ class _FakeSteeringRepo:
     notes: list[dict[str, Any]] = field(default_factory=list)
     _counter: int = 0
 
-    def add_note(self, project_id: UUID, body: str, *, author: str = "human") -> int:
+    def add_note(
+        self, project_id: UUID, body: str, *, author: str = "human", target_role: str | None = None
+    ) -> int:
         self._counter += 1
         self.notes.append(
             {"id": self._counter, "project_id": project_id, "body": body, "author": author}

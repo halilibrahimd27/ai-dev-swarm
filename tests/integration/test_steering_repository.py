@@ -56,31 +56,46 @@ def test_add_then_pull_round_trip(live_pool: ConnectionPool, project_row: UUID) 
 
     bodies = repo.pull_unconsumed(project_row, "Ideator")
     assert bodies == ["be terse", "prefer Rust where it makes sense"]
-    # Second pull is empty — atomic deliver-once.
+    # Second pull for the SAME role is empty — delivered once per role.
     assert repo.pull_unconsumed(project_row, "Ideator") == []
 
 
-def test_concurrent_pulls_each_note_delivered_at_most_once(
+def test_broadcast_reaches_each_role_targeted_reaches_one(
     live_pool: ConnectionPool, project_row: UUID
 ) -> None:
-    """Two threads pulling for the same project must not both see the same note.
+    """A broadcast note (target_role None) reaches EVERY role once; a targeted
+    note reaches only its role. (Targeting used to be dropped entirely.)"""
+    repo = PsycopgSteeringRepo(live_pool)
+    repo.add_note(project_row, "all roles")  # broadcast
+    repo.add_note(project_row, "dev only", target_role="Developer")
 
-    Verifies the ``FOR UPDATE SKIP LOCKED`` + transaction guarantees:
-    the loser sees an empty list rather than a duplicate.
+    assert repo.pull_unconsumed(project_row, "Developer") == ["all roles", "dev only"]
+    # Tester sees the broadcast but NOT the Developer-targeted note.
+    assert repo.pull_unconsumed(project_row, "Tester") == ["all roles"]
+    # Each role only once.
+    assert repo.pull_unconsumed(project_row, "Developer") == []
+
+
+def test_concurrent_same_role_pulls_deliver_each_note_at_most_once(
+    live_pool: ConnectionPool, project_row: UUID
+) -> None:
+    """Two threads pulling for the SAME role must not both see the same note —
+    the delivery-row PK (note_id, role) + ON CONFLICT DO NOTHING ... RETURNING
+    arbitrates so each note is delivered to that role exactly once.
     """
     repo = PsycopgSteeringRepo(live_pool)
     for i in range(5):
-        repo.add_note(project_row, f"note {i}")
+        repo.add_note(project_row, f"note {i}")  # broadcast
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        f1 = executor.submit(repo.pull_unconsumed, project_row, "RoleA")
-        f2 = executor.submit(repo.pull_unconsumed, project_row, "RoleB")
+        f1 = executor.submit(repo.pull_unconsumed, project_row, "Developer")
+        f2 = executor.submit(repo.pull_unconsumed, project_row, "Developer")
         a = f1.result(timeout=5)
         b = f2.result(timeout=5)
 
     seen = sorted(a + b)
-    assert seen == sorted([f"note {i}" for i in range(5)])
-    # No body appears in both pulls.
+    assert seen == sorted([f"note {i}" for i in range(5)])  # all delivered, once total
+    # No body delivered twice to the same role.
     assert set(a).isdisjoint(set(b))
 
 

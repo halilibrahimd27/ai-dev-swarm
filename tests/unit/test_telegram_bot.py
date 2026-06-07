@@ -38,7 +38,9 @@ class _FakeSteering:
     notes: list[dict[str, Any]] = field(default_factory=list)
     _ctr: int = 0
 
-    def add_note(self, project_id: UUID, body: str, *, author: str = "human") -> int:
+    def add_note(
+        self, project_id: UUID, body: str, *, author: str = "human", target_role: str | None = None
+    ) -> int:
         self._ctr += 1
         self.notes.append({"id": self._ctr, "project_id": project_id, "body": body})
         return self._ctr

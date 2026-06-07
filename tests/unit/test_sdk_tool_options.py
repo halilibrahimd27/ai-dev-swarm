@@ -157,12 +157,13 @@ def test_steering_notes_land_in_system_prompt(tmp_path: Path) -> None:
     assert "## Steering notes from the operator" in opts.system_prompt
 
 
-def test_steering_notes_are_role_consumed(tmp_path: Path) -> None:
-    """A Developer pull marks the note consumed; the Tester sees nothing."""
+def test_broadcast_steering_note_reaches_every_role(tmp_path: Path) -> None:
+    """A broadcast note (target_role None) appears in BOTH the Developer and
+    Tester prompts — each role is delivered the note exactly once."""
     session_repo = FakeMilestoneSessionRepo()
     steering = FakeSteeringRepo()
     ms = _milestone()
-    steering.add_note(ms.project_id, "watch the bounds")
+    steering.add_note(ms.project_id, "watch the bounds")  # broadcast
     dev = ClaudeAgentSDKDeveloperTool(Settings(), session_repo, steering_repo=steering)
     tester = ClaudeAgentSDKTesterTool(Settings(), session_repo, steering_repo=steering)
     ws = Workspace(tmp_path / "ws")
@@ -170,7 +171,23 @@ def test_steering_notes_are_role_consumed(tmp_path: Path) -> None:
     dev_opts = dev.build_options(ms, ws, max_turns=10, max_budget_usd=1.0, resume=None)
     test_opts = tester.build_options(ms, ws, max_turns=10, max_budget_usd=1.0, resume=None)
     assert "watch the bounds" in str(dev_opts.system_prompt)
-    assert "watch the bounds" not in str(test_opts.system_prompt)
+    assert "watch the bounds" in str(test_opts.system_prompt)
+
+
+def test_targeted_steering_note_reaches_only_its_role(tmp_path: Path) -> None:
+    """A note targeted at the Developer never appears in the Tester's prompt."""
+    session_repo = FakeMilestoneSessionRepo()
+    steering = FakeSteeringRepo()
+    ms = _milestone()
+    steering.add_note(ms.project_id, "dev specifics", target_role="Developer")
+    dev = ClaudeAgentSDKDeveloperTool(Settings(), session_repo, steering_repo=steering)
+    tester = ClaudeAgentSDKTesterTool(Settings(), session_repo, steering_repo=steering)
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+    dev_opts = dev.build_options(ms, ws, max_turns=10, max_budget_usd=1.0, resume=None)
+    test_opts = tester.build_options(ms, ws, max_turns=10, max_budget_usd=1.0, resume=None)
+    assert "dev specifics" in str(dev_opts.system_prompt)
+    assert "dev specifics" not in str(test_opts.system_prompt)
 
 
 def test_no_steering_repo_means_no_pretooluse_hook(tmp_path: Path) -> None:
