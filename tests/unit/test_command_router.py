@@ -298,6 +298,20 @@ def test_ideate_now_calls_the_runner_and_returns_quickly() -> None:
     assert "scheduled" in result.detail
 
 
+def test_ideate_now_skips_with_honest_feedback_when_work_is_active() -> None:
+    """Ideation runs ONE project at a time: with a non-terminal project around,
+    ideate_now must NOT fire the runner and must tell the operator it skipped
+    (instead of a misleading 'scheduled')."""
+    fired: list[int] = []
+    project = Project(name="p", spec=_spec(), state=ProjectState.BUILDING)
+    router, _, _, _ = _make_router(project=project)
+    router.ideate_runner = lambda: fired.append(1)
+    result = router.dispatch(IdeateNow())
+    assert result.ok
+    assert fired == []  # runner NOT scheduled while work is active
+    assert "skipped" in result.detail
+
+
 def test_ideate_now_returns_soft_error_when_runner_raises() -> None:
     """Runner errors must NOT crash the dispatcher — soft failure instead."""
 

@@ -248,7 +248,24 @@ class CommandRouter:
         )
 
     def _ideate_now(self, cmd: IdeateNow) -> CommandResult:
-        """Fire-and-forget: schedule the ideation crew + return at once."""
+        """Fire-and-forget: schedule the ideation crew + return at once.
+
+        Ideation runs ONE project at a time — `_run_ideation_once` self-skips
+        while any non-terminal project exists. Pre-check the same condition so
+        the operator gets honest feedback ("skipped, you have active work")
+        instead of a misleading "scheduled" toast that produces nothing.
+        """
+        if self._has_active_work():
+            self._log.info("router.ideate_now_skipped_has_work")
+            return CommandResult(
+                ok=True,
+                intent=cmd.intent,
+                detail=(
+                    "ideation skipped — a project is still active / awaiting approval / "
+                    "blocked. The swarm builds one project at a time: finish, approve or "
+                    "abort it first, or use 'New project' to queue an idea directly."
+                ),
+            )
         try:
             self.ideate_runner()
         except Exception as exc:
@@ -264,6 +281,16 @@ class CommandRouter:
             intent=cmd.intent,
             detail="ideation crew scheduled (watch transcript / Phoenix)",
         )
+
+    def _has_active_work(self) -> bool:
+        """True if any non-terminal project exists (mirrors the orchestrator's
+        ideation guard) — active / queued / blocked. ``get_active`` already
+        covers planning / awaiting_approval / building / replanning / integration."""
+        if self.project_repo.get_active() is not None:
+            return True
+        if self.project_repo.list_by_state(ProjectState.QUEUED):
+            return True
+        return bool(self.project_repo.list_by_state(ProjectState.BLOCKED))
 
     def _submit_idea(self, cmd: SubmitIdea) -> CommandResult:
         """Queue an operator-authored idea directly as a project.
