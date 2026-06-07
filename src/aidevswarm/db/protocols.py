@@ -99,6 +99,10 @@ class TokenLogRepo(Protocol):
         """All-time spend grouped by project: ``(project_id, tokens, cost)``
         rows (project-scoped only), most-expensive first."""
 
+    def by_project_and_role(self) -> list[tuple[UUID, str, int, float]]:
+        """All-time ``(project_id, role, tokens, cost)`` rows — powers the
+        Spend view's expandable per-project and per-role breakdowns."""
+
     def recent_milestone_avg_cost(self, project_id: UUID, limit: int = 3) -> float:
         """Average total cost of the project's ``limit`` most-recent
         milestones — reflects the CURRENT model tier, so a cost projection

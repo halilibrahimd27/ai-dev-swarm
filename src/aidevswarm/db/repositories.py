@@ -565,6 +565,21 @@ class PsycopgTokenLogRepo:
             )
             return [(r[0], int(r[1]), float(r[2])) for r in cur.fetchall()]
 
+    def by_project_and_role(self) -> list[tuple[UUID, str, int, float]]:
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT project_id, role,
+                       COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens,
+                       COALESCE(SUM(cost_usd), 0) AS cost
+                FROM token_log
+                WHERE project_id IS NOT NULL
+                GROUP BY project_id, role
+                ORDER BY cost DESC
+                """
+            )
+            return [(r[0], str(r[1]), int(r[2]), float(r[3])) for r in cur.fetchall()]
+
     def recent_milestone_avg_cost(self, project_id: UUID, limit: int = 3) -> float:
         with self._pool.connection() as conn, conn.cursor() as cur:
             cur.execute(

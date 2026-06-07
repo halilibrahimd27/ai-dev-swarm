@@ -368,28 +368,75 @@ def _collect_projects(project_repo: ProjectRepo) -> list[Project]:
 
 
 def _collect_spend(token_repo: TokenLogRepo, project_repo: ProjectRepo) -> dict[str, Any]:
-    """Today + all-time spend, per-role and per-project (named)."""
+    """Today + all-time spend with expandable breakdowns.
+
+    From a single ``by_project_and_role`` query we build BOTH the per-project
+    view (each project → its roles) and the all-time per-role view (each role →
+    its projects), so the Spend UI can expand either dimension.
+    """
     daily_tokens = token_repo.daily_total_tokens()
     daily_cost = token_repo.daily_cost_usd()
-    by_role = token_repo.daily_by_role()
+    by_role_today = token_repo.daily_by_role()
     all_tokens, all_cost = token_repo.all_time_totals()
-    by_project = token_repo.by_project()
     names = {p.id: p.name for p in project_repo.list_all()}
+
+    proj_children: dict[UUID, list[dict[str, Any]]] = {}
+    role_children: dict[str, list[dict[str, Any]]] = {}
+    proj_tot: dict[UUID, list[float]] = {}
+    role_tot: dict[str, list[float]] = {}
+    for pid, role, tok, cost in token_repo.by_project_and_role():
+        proj_children.setdefault(pid, []).append(
+            {"role": role, "tokens": tok, "cost_usd": round(cost, 4)}
+        )
+        role_children.setdefault(role, []).append(
+            {
+                "project_id": str(pid),
+                "name": names.get(pid, str(pid)[:8]),
+                "tokens": tok,
+                "cost_usd": round(cost, 4),
+            }
+        )
+        pt = proj_tot.setdefault(pid, [0.0, 0.0])
+        pt[0] += tok
+        pt[1] += cost
+        rt = role_tot.setdefault(role, [0.0, 0.0])
+        rt[0] += tok
+        rt[1] += cost
+
+    def _by_cost(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return sorted(rows, key=lambda r: r["cost_usd"], reverse=True)
+
+    by_project = _by_cost(
+        [
+            {
+                "project_id": str(pid),
+                "name": names.get(pid, str(pid)[:8]),
+                "tokens": int(tot[0]),
+                "cost_usd": round(tot[1], 4),
+                "roles": _by_cost(proj_children.get(pid, [])),
+            }
+            for pid, tot in proj_tot.items()
+        ]
+    )
+    all_time_by_role = _by_cost(
+        [
+            {
+                "role": role,
+                "tokens": int(tot[0]),
+                "cost_usd": round(tot[1], 4),
+                "projects": _by_cost(role_children.get(role, [])),
+            }
+            for role, tot in role_tot.items()
+        ]
+    )
     return {
         "daily_tokens": daily_tokens,
         "daily_cost_usd": round(daily_cost, 4),
         "all_time_tokens": all_tokens,
         "all_time_cost_usd": round(all_cost, 4),
-        "by_role": [{"role": role, "tokens": t, "cost_usd": round(c, 4)} for role, t, c in by_role],
-        "by_project": [
-            {
-                "project_id": str(pid),
-                "name": names.get(pid, str(pid)[:8]),
-                "tokens": t,
-                "cost_usd": round(c, 4),
-            }
-            for pid, t, c in by_project
-        ],
+        "by_role": [{"role": r, "tokens": t, "cost_usd": round(c, 4)} for r, t, c in by_role_today],
+        "all_time_by_role": all_time_by_role,
+        "by_project": by_project,
         # 14-day daily cost series for the dashboard sparkline.
         "daily_series": [{"date": d, "cost": c} for d, c in token_repo.daily_cost_series(14)],
     }

@@ -295,6 +295,19 @@ class InMemoryTokenLogRepo:
         rows.sort(key=lambda x: x[2], reverse=True)
         return rows
 
+    def by_project_and_role(self) -> list[tuple[UUID, str, int, float]]:
+        agg: dict[tuple[UUID, str], tuple[int, float]] = {}
+        for r in self.records:
+            pid = r["project_id"]
+            if pid is None:
+                continue
+            key = (pid, str(r["role"]))
+            tokens, cost = agg.get(key, (0, 0.0))
+            agg[key] = (tokens + r["input_tokens"] + r["output_tokens"], cost + r["cost_usd"])
+        rows = [(pid, role, t, c) for (pid, role), (t, c) in agg.items()]
+        rows.sort(key=lambda x: x[3], reverse=True)
+        return rows
+
     def daily_cost_series(self, days: int = 14) -> list[tuple[str, float]]:
         # Fake: lump all spend on "today"; zero-fill the rest (tests don't
         # span days). Shape matches the real repo (oldest-first, len == days).
