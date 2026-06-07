@@ -375,6 +375,17 @@ build-kit handoff).
 
 ---
 
+## EXAMPLE
+
+<img width="1919" height="891" alt="Ekran Resmi 2026-06-07 23 51 34" src="https://github.com/user-attachments/assets/de98797f-b625-4e99-b438-54aaf5d0c9c4" />
+<img width="1919" height="886" alt="Ekran Resmi 2026-06-07 23 52 06" src="https://github.com/user-attachments/assets/051fcf6c-9cdf-4f1d-9625-dbfbbee214b6" />
+<img width="1915" height="888" alt="Ekran Resmi 2026-06-07 23 51 55" src="https://github.com/user-attachments/assets/ecbeedcd-d150-40b1-bf7d-e27f5cef3e6c" />
+<img width="1921" height="884" alt="Ekran Resmi 2026-06-07 23 52 15" src="https://github.com/user-attachments/assets/2c2df849-912d-4b66-ba64-fbd188f88747" />
+<img width="1917" height="892" alt="Ekran Resmi 2026-06-07 23 52 27" src="https://github.com/user-attachments/assets/72a04e35-4c19-4c90-9253-f60b5e42208a" />
+<img width="1916" height="889" alt="Ekran Resmi 2026-06-07 23 52 35" src="https://github.com/user-attachments/assets/2668e934-d991-4fe5-859c-643589e10d60" />
+
+---
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
